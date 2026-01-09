@@ -1,0 +1,248 @@
+"""Character Assistant Tools.
+
+These tools enable the character-assistant agent to manage agent configurations,
+including setting tools, MCP servers, and skills.
+"""
+from claude_agent_sdk import tool
+from typing import Any
+import logging
+from sqlalchemy import select
+
+from ..core.database import AsyncSessionLocal
+from ..models.database import Character
+
+logger = logging.getLogger(__name__)
+
+
+@tool(
+    "set_agent_tools",
+    "Set the allowed tools for an agent. This replaces all existing tools with the provided list.",
+    {
+        "agent_id": str,
+        "tools": list[str]
+    }
+)
+async def set_agent_tools(agent_id: str, tools: list[str]) -> str:
+    """Set the allowed tools for an agent.
+
+    This replaces the agent's entire allowed_tools list with the provided tools.
+
+    Args:
+        agent_id: The agent ID (e.g., 'elon-981e', 'researcher-a3d5025d')
+        tools: List of tool names to allow (e.g., ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'])
+
+    Available Claude Code tools:
+        - Read: Read files
+        - Write: Write/create files
+        - Edit: Edit existing files
+        - Bash: Execute shell commands
+        - Glob: Find files by pattern
+        - Grep: Search file contents
+        - WebFetch: Fetch web content
+        - WebSearch: Search the web
+
+    Returns:
+        Success or error message
+    """
+    try:
+        async with AsyncSessionLocal() as db:
+            # Get or create character database record
+            result = await db.execute(
+                select(Character).where(Character.id == agent_id)
+            )
+            db_char = result.scalar_one_or_none()
+
+            if not db_char:
+                # Create new database record if doesn't exist
+                db_char = Character(
+                    id=agent_id,
+                    allowed_tools=tools,
+                    allowed_mcp_servers=[],
+                    allowed_skills=[],
+                )
+                db.add(db_char)
+            else:
+                # Update existing record
+                db_char.allowed_tools = tools
+
+            await db.commit()
+
+            tools_str = ", ".join(tools) if tools else "None"
+            logger.info(f"[CHARACTER_ASSISTANT_TOOLS] Set tools for agent '{agent_id}': {tools_str}")
+            return f"✓ Successfully set {len(tools)} tool(s) for agent '{agent_id}': {tools_str}"
+
+    except Exception as e:
+        logger.error(f"[CHARACTER_ASSISTANT_TOOLS] Error setting agent tools: {e}")
+        return f"Error setting agent tools: {str(e)}"
+
+
+@tool(
+    "set_agent_mcp_servers",
+    "Set the allowed MCP servers for an agent. This replaces all existing MCP servers with the provided list.",
+    {
+        "agent_id": str,
+        "mcp_servers": list[str]
+    }
+)
+async def set_agent_mcp_servers(agent_id: str, mcp_servers: list[str]) -> str:
+    """Set the allowed MCP servers for an agent.
+
+    This replaces the agent's entire allowed_mcp_servers list with the provided servers.
+
+    Args:
+        agent_id: The agent ID (e.g., 'elon-981e', 'researcher-a3d5025d')
+        mcp_servers: List of MCP server names to allow (e.g., ['gmail', 'todoist', 'calendar'])
+
+    Available MCP servers vary by installation. Common ones include:
+        - gmail: Gmail integration
+        - todoist: Todoist task management
+        - google-calendar: Google Calendar integration
+        - mermaid: Mermaid diagram generation
+        - playwright: Browser automation
+        - chrome-devtools: Chrome DevTools integration
+
+    Returns:
+        Success or error message
+    """
+    try:
+        async with AsyncSessionLocal() as db:
+            # Get or create character database record
+            result = await db.execute(
+                select(Character).where(Character.id == agent_id)
+            )
+            db_char = result.scalar_one_or_none()
+
+            if not db_char:
+                # Create new database record if doesn't exist
+                db_char = Character(
+                    id=agent_id,
+                    allowed_tools=[],
+                    allowed_mcp_servers=mcp_servers,
+                    allowed_skills=[],
+                )
+                db.add(db_char)
+            else:
+                # Update existing record
+                db_char.allowed_mcp_servers = mcp_servers
+
+            await db.commit()
+
+            servers_str = ", ".join(mcp_servers) if mcp_servers else "None"
+            logger.info(f"[CHARACTER_ASSISTANT_TOOLS] Set MCP servers for agent '{agent_id}': {servers_str}")
+            return f"✓ Successfully set {len(mcp_servers)} MCP server(s) for agent '{agent_id}': {servers_str}"
+
+    except Exception as e:
+        logger.error(f"[CHARACTER_ASSISTANT_TOOLS] Error setting agent MCP servers: {e}")
+        return f"Error setting agent MCP servers: {str(e)}"
+
+
+@tool(
+    "set_agent_skills",
+    "Set the allowed skills for an agent. This replaces all existing skills with the provided list.",
+    {
+        "agent_id": str,
+        "skills": list[str]
+    }
+)
+async def set_agent_skills(agent_id: str, skills: list[str]) -> str:
+    """Set the allowed skills for an agent.
+
+    This replaces the agent's entire allowed_skills list with the provided skills.
+
+    Args:
+        agent_id: The agent ID (e.g., 'elon-981e', 'researcher-a3d5025d')
+        skills: List of skill IDs to allow (e.g., ['web-research', 'code-review-excellence'])
+
+    Returns:
+        Success or error message
+    """
+    try:
+        async with AsyncSessionLocal() as db:
+            # Get or create character database record
+            result = await db.execute(
+                select(Character).where(Character.id == agent_id)
+            )
+            db_char = result.scalar_one_or_none()
+
+            if not db_char:
+                # Create new database record if doesn't exist
+                db_char = Character(
+                    id=agent_id,
+                    allowed_tools=[],
+                    allowed_mcp_servers=[],
+                    allowed_skills=skills,
+                )
+                db.add(db_char)
+            else:
+                # Update existing record
+                db_char.allowed_skills = skills
+
+            await db.commit()
+
+            skills_str = ", ".join(skills) if skills else "None"
+            logger.info(f"[CHARACTER_ASSISTANT_TOOLS] Set skills for agent '{agent_id}': {skills_str}")
+            return f"✓ Successfully set {len(skills)} skill(s) for agent '{agent_id}': {skills_str}"
+
+    except Exception as e:
+        logger.error(f"[CHARACTER_ASSISTANT_TOOLS] Error setting agent skills: {e}")
+        return f"Error setting agent skills: {str(e)}"
+
+
+@tool(
+    "get_agent_capabilities",
+    "Get the current capabilities (tools, MCP servers, skills) for an agent.",
+    {"agent_id": str}
+)
+async def get_agent_capabilities(agent_id: str) -> str:
+    """Get the current capabilities for an agent.
+
+    Args:
+        agent_id: The agent ID (e.g., 'elon-981e', 'researcher-a3d5025d')
+
+    Returns:
+        Formatted string with agent's current capabilities
+    """
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Character).where(Character.id == agent_id)
+            )
+            db_char = result.scalar_one_or_none()
+
+            if not db_char:
+                return f"Agent '{agent_id}' not found in database. No capabilities configured yet."
+
+            output = f"# Capabilities for agent '{agent_id}'\n\n"
+
+            # Tools
+            tools = db_char.allowed_tools or []
+            output += f"**Tools ({len(tools)}):** "
+            output += ", ".join(tools) if tools else "None"
+            output += "\n\n"
+
+            # MCP Servers
+            mcp_servers = db_char.allowed_mcp_servers or []
+            output += f"**MCP Servers ({len(mcp_servers)}):** "
+            output += ", ".join(mcp_servers) if mcp_servers else "None"
+            output += "\n\n"
+
+            # Skills
+            skills = db_char.allowed_skills or []
+            output += f"**Skills ({len(skills)}):** "
+            output += ", ".join(skills) if skills else "None"
+            output += "\n"
+
+            return output
+
+    except Exception as e:
+        logger.error(f"[CHARACTER_ASSISTANT_TOOLS] Error getting agent capabilities: {e}")
+        return f"Error getting agent capabilities: {str(e)}"
+
+
+# Tool collection for character-assistant
+CHARACTER_ASSISTANT_TOOLS = [
+    set_agent_tools,
+    set_agent_mcp_servers,
+    set_agent_skills,
+    get_agent_capabilities,
+]

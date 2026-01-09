@@ -214,7 +214,9 @@ def get_single_specialist_allowed_tools(context: Dict[str, Any]) -> List[str]:
 
 def get_character_assistant_mcp_servers(context: Dict[str, Any]) -> Dict[str, Any]:
     """Get MCP servers for character assistant role (for editing agent configs)."""
-    servers = {}
+    from backend.services.claude_client import character_assistant_tools
+
+    servers = {"character_assistant": character_assistant_tools}
 
     # Character assistant gets file editing tools if available
     if context.get("character_tools"):
@@ -225,8 +227,10 @@ def get_character_assistant_mcp_servers(context: Dict[str, Any]) -> Dict[str, An
 
 def get_character_assistant_allowed_tools(context: Dict[str, Any]) -> List[str]:
     """Get allowed tools for character assistant role (for editing agent configs)."""
-    # Character assistant gets character-specific allowed tools
-    return context.get("allowed_tools", [])
+    # Character assistant gets character-specific allowed tools + character_assistant MCP tools
+    tools = context.get("allowed_tools", []).copy()
+    tools.append("mcp__character_assistant")
+    return tools
 
 
 def get_skill_assistant_mcp_servers(context: Dict[str, Any]) -> Dict[str, Any]:

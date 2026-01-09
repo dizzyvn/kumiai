@@ -16,6 +16,9 @@ from ..tools.pm_tools import contact_pm, remind, show_file, PM_MANAGEMENT_TOOLS
 # Import skill-assistant tools
 from ..tools.skill_assistant_tools import SKILL_ASSISTANT_TOOLS
 
+# Import character-assistant tools
+from ..tools.character_assistant_tools import CHARACTER_ASSISTANT_TOOLS
+
 # Import tool provider system
 from ..tools.provider_manager import ToolProviderManager
 from ..tools.providers import MCPProvider, PythonProvider, HTTPProvider
@@ -195,7 +198,14 @@ pm_management_tools = create_sdk_mcp_server(
 skill_assistant_tools = create_sdk_mcp_server(
     name="skill_assistant",
     version="1.0.0",
-    tools=SKILL_ASSISTANT_TOOLS  # search_custom_tools
+    tools=SKILL_ASSISTANT_TOOLS  # search_custom_tools, search_skills, etc.
+)
+
+# Create character-assistant tools MCP server
+character_assistant_tools = create_sdk_mcp_server(
+    name="character_assistant",
+    version="1.0.0",
+    tools=CHARACTER_ASSISTANT_TOOLS  # set_agent_tools, set_agent_mcp_servers, etc.
 )
 
 

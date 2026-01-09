@@ -14,7 +14,7 @@ from claude_agent_sdk import ClaudeAgentOptions, HookMatcher
 from backend.config.session_roles import SessionRole
 from backend.core.constants import MCP_TOOL_EXECUTION_GUIDELINES
 from backend.sessions.base_session import BaseSession
-from backend.services.claude_client import kumiAI_tools, common_tools, skill_assistant_tools, inject_session_id_hook
+from backend.services.claude_client import kumiAI_tools, common_tools, skill_assistant_tools, character_assistant_tools, inject_session_id_hook
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,10 @@ class AssistantSession(BaseSession):
             mcp_servers["skill_assistant"] = skill_assistant_tools
             allowed_tools.append("mcp__skill_assistant")
             logger.info("[ASSISTANT_SESSION] ✓ Added skill_assistant MCP server")
+        elif self.role == SessionRole.CHARACTER_ASSISTANT:
+            mcp_servers["character_assistant"] = character_assistant_tools
+            allowed_tools.append("mcp__character_assistant")
+            logger.info("[ASSISTANT_SESSION] ✓ Added character_assistant MCP server")
 
         # MCP instructions (shared across all assistant roles)
         mcp_instructions = f"""
