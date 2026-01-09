@@ -6,12 +6,37 @@ including setting tools, MCP servers, and skills.
 from claude_agent_sdk import tool
 from typing import Any
 import logging
+import json
 from sqlalchemy import select
 
 from ..core.database import AsyncSessionLocal
 from ..models.database import Character
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_list_param(value: Any) -> list:
+    """Parse a list parameter that might be a JSON string or already a list.
+
+    Args:
+        value: The parameter value (list, JSON string, or None)
+
+    Returns:
+        Parsed list or empty list if None
+    """
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return parsed
+            return []
+        except (json.JSONDecodeError, ValueError):
+            return []
+    return []
 
 
 @tool(
@@ -46,7 +71,7 @@ async def set_agent_tools(args: dict[str, Any]) -> dict[str, Any]:
     """
     try:
         agent_id = args.get("agent_id")
-        tools = args.get("tools", [])
+        tools = _parse_list_param(args.get("tools"))
 
         if not agent_id:
             return {
@@ -127,7 +152,7 @@ async def set_agent_mcp_servers(args: dict[str, Any]) -> dict[str, Any]:
     """
     try:
         agent_id = args.get("agent_id")
-        mcp_servers = args.get("mcp_servers", [])
+        mcp_servers = _parse_list_param(args.get("mcp_servers"))
 
         if not agent_id:
             return {
@@ -200,7 +225,7 @@ async def set_agent_skills(args: dict[str, Any]) -> dict[str, Any]:
     """
     try:
         agent_id = args.get("agent_id")
-        skills = args.get("skills", [])
+        skills = _parse_list_param(args.get("skills"))
 
         if not agent_id:
             return {
