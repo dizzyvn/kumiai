@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
         "tools": list[str]
     }
 )
-async def set_agent_tools(agent_id: str, tools: list[str]) -> str:
+async def set_agent_tools(args: dict[str, Any]) -> dict[str, Any]:
     """Set the allowed tools for an agent.
 
     This replaces the agent's entire allowed_tools list with the provided tools.
@@ -45,6 +45,17 @@ async def set_agent_tools(agent_id: str, tools: list[str]) -> str:
         Success or error message
     """
     try:
+        agent_id = args.get("agent_id")
+        tools = args.get("tools", [])
+
+        if not agent_id:
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": "Error: agent_id is required"
+                }]
+            }
+
         async with AsyncSessionLocal() as db:
             # Get or create character database record
             result = await db.execute(
@@ -69,11 +80,21 @@ async def set_agent_tools(agent_id: str, tools: list[str]) -> str:
 
             tools_str = ", ".join(tools) if tools else "None"
             logger.info(f"[CHARACTER_ASSISTANT_TOOLS] Set tools for agent '{agent_id}': {tools_str}")
-            return f"✓ Successfully set {len(tools)} tool(s) for agent '{agent_id}': {tools_str}"
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": f"✓ Successfully set {len(tools)} tool(s) for agent '{agent_id}': {tools_str}"
+                }]
+            }
 
     except Exception as e:
         logger.error(f"[CHARACTER_ASSISTANT_TOOLS] Error setting agent tools: {e}")
-        return f"Error setting agent tools: {str(e)}"
+        return {
+            "content": [{
+                "type": "text",
+                "text": f"Error setting agent tools: {str(e)}"
+            }]
+        }
 
 
 @tool(
@@ -84,7 +105,7 @@ async def set_agent_tools(agent_id: str, tools: list[str]) -> str:
         "mcp_servers": list[str]
     }
 )
-async def set_agent_mcp_servers(agent_id: str, mcp_servers: list[str]) -> str:
+async def set_agent_mcp_servers(args: dict[str, Any]) -> dict[str, Any]:
     """Set the allowed MCP servers for an agent.
 
     This replaces the agent's entire allowed_mcp_servers list with the provided servers.
@@ -105,6 +126,17 @@ async def set_agent_mcp_servers(agent_id: str, mcp_servers: list[str]) -> str:
         Success or error message
     """
     try:
+        agent_id = args.get("agent_id")
+        mcp_servers = args.get("mcp_servers", [])
+
+        if not agent_id:
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": "Error: agent_id is required"
+                }]
+            }
+
         async with AsyncSessionLocal() as db:
             # Get or create character database record
             result = await db.execute(
@@ -129,11 +161,21 @@ async def set_agent_mcp_servers(agent_id: str, mcp_servers: list[str]) -> str:
 
             servers_str = ", ".join(mcp_servers) if mcp_servers else "None"
             logger.info(f"[CHARACTER_ASSISTANT_TOOLS] Set MCP servers for agent '{agent_id}': {servers_str}")
-            return f"✓ Successfully set {len(mcp_servers)} MCP server(s) for agent '{agent_id}': {servers_str}"
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": f"✓ Successfully set {len(mcp_servers)} MCP server(s) for agent '{agent_id}': {servers_str}"
+                }]
+            }
 
     except Exception as e:
         logger.error(f"[CHARACTER_ASSISTANT_TOOLS] Error setting agent MCP servers: {e}")
-        return f"Error setting agent MCP servers: {str(e)}"
+        return {
+            "content": [{
+                "type": "text",
+                "text": f"Error setting agent MCP servers: {str(e)}"
+            }]
+        }
 
 
 @tool(
@@ -144,7 +186,7 @@ async def set_agent_mcp_servers(agent_id: str, mcp_servers: list[str]) -> str:
         "skills": list[str]
     }
 )
-async def set_agent_skills(agent_id: str, skills: list[str]) -> str:
+async def set_agent_skills(args: dict[str, Any]) -> dict[str, Any]:
     """Set the allowed skills for an agent.
 
     This replaces the agent's entire allowed_skills list with the provided skills.
@@ -157,6 +199,17 @@ async def set_agent_skills(agent_id: str, skills: list[str]) -> str:
         Success or error message
     """
     try:
+        agent_id = args.get("agent_id")
+        skills = args.get("skills", [])
+
+        if not agent_id:
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": "Error: agent_id is required"
+                }]
+            }
+
         async with AsyncSessionLocal() as db:
             # Get or create character database record
             result = await db.execute(
@@ -181,11 +234,21 @@ async def set_agent_skills(agent_id: str, skills: list[str]) -> str:
 
             skills_str = ", ".join(skills) if skills else "None"
             logger.info(f"[CHARACTER_ASSISTANT_TOOLS] Set skills for agent '{agent_id}': {skills_str}")
-            return f"✓ Successfully set {len(skills)} skill(s) for agent '{agent_id}': {skills_str}"
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": f"✓ Successfully set {len(skills)} skill(s) for agent '{agent_id}': {skills_str}"
+                }]
+            }
 
     except Exception as e:
         logger.error(f"[CHARACTER_ASSISTANT_TOOLS] Error setting agent skills: {e}")
-        return f"Error setting agent skills: {str(e)}"
+        return {
+            "content": [{
+                "type": "text",
+                "text": f"Error setting agent skills: {str(e)}"
+            }]
+        }
 
 
 @tool(
@@ -193,7 +256,7 @@ async def set_agent_skills(agent_id: str, skills: list[str]) -> str:
     "Get the current capabilities (tools, MCP servers, skills) for an agent.",
     {"agent_id": str}
 )
-async def get_agent_capabilities(agent_id: str) -> str:
+async def get_agent_capabilities(args: dict[str, Any]) -> dict[str, Any]:
     """Get the current capabilities for an agent.
 
     Args:
@@ -203,6 +266,16 @@ async def get_agent_capabilities(agent_id: str) -> str:
         Formatted string with agent's current capabilities
     """
     try:
+        agent_id = args.get("agent_id")
+
+        if not agent_id:
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": "Error: agent_id is required"
+                }]
+            }
+
         async with AsyncSessionLocal() as db:
             result = await db.execute(
                 select(Character).where(Character.id == agent_id)
@@ -210,7 +283,12 @@ async def get_agent_capabilities(agent_id: str) -> str:
             db_char = result.scalar_one_or_none()
 
             if not db_char:
-                return f"Agent '{agent_id}' not found in database. No capabilities configured yet."
+                return {
+                    "content": [{
+                        "type": "text",
+                        "text": f"Agent '{agent_id}' not found in database. No capabilities configured yet."
+                    }]
+                }
 
             output = f"# Capabilities for agent '{agent_id}'\n\n"
 
@@ -232,11 +310,21 @@ async def get_agent_capabilities(agent_id: str) -> str:
             output += ", ".join(skills) if skills else "None"
             output += "\n"
 
-            return output
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": output
+                }]
+            }
 
     except Exception as e:
         logger.error(f"[CHARACTER_ASSISTANT_TOOLS] Error getting agent capabilities: {e}")
-        return f"Error getting agent capabilities: {str(e)}"
+        return {
+            "content": [{
+                "type": "text",
+                "text": f"Error getting agent capabilities: {str(e)}"
+            }]
+        }
 
 
 # Tool collection for character-assistant
