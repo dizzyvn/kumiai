@@ -573,7 +573,7 @@ export const ContactPMWidget: React.FC<ToolWidgetProps> = ({
   toolArgs,
   result
 }) => {
-  const message = toolArgs.message as string;
+  const message = (toolArgs.message as string) || '';
   const { content: resultContent, isError } = parseResultContent(result);
 
   // Truncate message for header
@@ -614,8 +614,8 @@ export const ContactSessionWidget: React.FC<ToolWidgetProps> = ({
   toolArgs,
   result
 }) => {
-  const instanceId = toolArgs.instance_id as string;
-  const message = toolArgs.message as string;
+  const instanceId = (toolArgs.instance_id as string) || '';
+  const message = (toolArgs.message as string) || '';
   const { content: resultContent, isError } = parseResultContent(result);
 
   // Truncate session ID for header
@@ -662,7 +662,7 @@ export const SpawnSessionWidget: React.FC<ToolWidgetProps> = ({
   toolArgs,
   result
 }) => {
-  const sessionDescription = toolArgs.session_description as string;
+  const sessionDescription = (toolArgs.session_description as string) || '';
   const selectedSpecialists = toolArgs.selected_specialists as string[] | undefined;
   const { content: resultContent, isError } = parseResultContent(result);
 
@@ -987,8 +987,8 @@ export const GetProjectStatusWidget: React.FC<ToolWidgetProps> = ({
 export const UpdateInstanceStageWidget: React.FC<ToolWidgetProps> = ({
   toolArgs
 }) => {
-  const instanceId = toolArgs.instance_id as string;
-  const newStage = toolArgs.new_stage as string;
+  const instanceId = (toolArgs.instance_id as string) || '';
+  const newStage = (toolArgs.new_stage as string) || 'waiting';
 
   // Stage display info
   const stageInfo: Record<string, { label: string }> = {
