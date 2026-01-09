@@ -463,9 +463,9 @@ export const WriteWidget: React.FC<ToolWidgetProps> = ({
   const content = toolArgs.content as string;
   const { content: resultContent, isError } = parseResultContent(result);
 
-  const previewContent = content.length > 200
+  const previewContent = content && content.length > 200
     ? content.substring(0, 200) + '\n...'
-    : content;
+    : content || '';
 
   const header = (
     <>
