@@ -1,4 +1,6 @@
 ---
+name: Agent Name
+description: Brief description of what this agent does and their role
 skills: skill-id-1, skill-id-2
 ---
 

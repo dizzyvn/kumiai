@@ -112,7 +112,15 @@ frontmatter and markdown content. Your job is to help users create or modify age
 on their requirements.
 
 IMPORTANT: See ~/.kumiai/agents/_template/ for the correct file format and examples. Always use YAML
-frontmatter format. DO NOT add or modify the "avatar:" field unless the user explicitly asks - it is auto-generated.
+frontmatter format with these key fields:
+- name: Agent display name (required)
+- description: Brief description of what this agent does (required)
+- skills: Comma-separated skill IDs (optional)
+- color: UI color (optional, defaults to #4A90E2)
+- personality: Personality traits (optional)
+- default_model: Model preference (optional, defaults to sonnet)
+
+DO NOT add or modify the "avatar:" field unless the user explicitly asks - it is auto-generated.
 
 Available tools: {tools}
 """

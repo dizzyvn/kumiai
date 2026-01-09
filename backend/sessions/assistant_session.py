@@ -83,7 +83,13 @@ Each character is in its own subdirectory with an agent.md file (e.g., ~/.kumiai
 
 **IMPORTANT - File Format:**
 - Check ~/.kumiai/agents/_template/agent.md for the complete format and structure
-- Use YAML frontmatter (skills, color, personality, etc.)
+- Use YAML frontmatter with these key fields:
+  * name: Agent display name (required)
+  * description: Brief description of what this agent does (required)
+  * skills: Comma-separated skill IDs (optional)
+  * color: UI color (optional, defaults to #4A90E2)
+  * personality: Personality traits (optional)
+  * default_model: Model preference (optional, defaults to sonnet)
 - Follow the markdown template structure
 - DO NOT add or modify the "avatar:" field unless explicitly requested - it is auto-generated
 - Browse existing characters for examples
