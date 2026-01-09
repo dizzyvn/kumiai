@@ -55,6 +55,10 @@ npm run dev
    - **Import from GitHub**: Click Import → Paste URL (e.g., `https://github.com/anthropics/skills/tree/main/skills/internal-comms`)
    - **Create Your Own**: Click New Skill → Use the AI assistant (💬 button) for help writing SKILL.md
    - Browse Anthropic's skills: [github.com/anthropics/skills](https://github.com/anthropics/skills)
+   - Explore community skills:
+     - [VoltAgent/awesome-claude-skills](https://github.com/VoltAgent/awesome-claude-skills)
+     - [BehiSecc/awesome-claude-skills](https://github.com/BehiSecc/awesome-claude-skills)
+     - [ComposioHQ/awesome-claude-skills](https://github.com/ComposioHQ/awesome-claude-skills)
 
 2. **Create Agents** → Agents page
    - Click New Member → Assign skills → Define personality
