@@ -674,7 +674,6 @@ export default function Agents({ onChatContextChange }: AgentsProps) {
               localStorage.setItem('isCharacterChatOpen', JSON.stringify(!isChatOpen));
             }}
             characterId={selectedCharacter?.id}
-            characterPath={selectedCharacter?.id ? `character_library/${selectedCharacter.id}` : undefined}
             characterName={selectedCharacter?.name}
             onCharacterUpdated={async () => {
               // Reload characters list and refresh current character if one is selected

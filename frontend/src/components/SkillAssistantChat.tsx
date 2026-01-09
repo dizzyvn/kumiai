@@ -15,7 +15,6 @@ interface SkillAssistantChatProps {
   isOpen: boolean;
   onToggle: () => void;
   skillId?: string;
-  skillPath?: string;
   skillName?: string;
   onSkillUpdated?: () => void; // Callback when skill is auto-saved
 }
@@ -24,7 +23,6 @@ export function SkillAssistantChat({
   isOpen,
   onToggle,
   skillId,
-  skillPath,
   skillName,
   onSkillUpdated,
 }: SkillAssistantChatProps) {
@@ -33,14 +31,9 @@ export function SkillAssistantChat({
   const [error, setError] = useState<string | null>(null);
   const [sessionStatus, setSessionStatus] = useState<string>('idle');
 
-  // Load or create skill assistant session when skill changes
+  // Load or create skill assistant session when component mounts
   useEffect(() => {
     const loadOrCreateSkillSession = async () => {
-      if (!skillPath) {
-        setSessionId(null);
-        return;
-      }
-
       setIsLoading(true);
       setError(null);
 
@@ -83,7 +76,7 @@ export function SkillAssistantChat({
     };
 
     loadOrCreateSkillSession();
-  }, [skillPath, skillId, skillName]);
+  }, []); // Load once on mount
 
   // Handle auto-save events
   const handleAutoSave = (type: 'skill' | 'character', id: string) => {

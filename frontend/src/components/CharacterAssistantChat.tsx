@@ -15,7 +15,6 @@ interface CharacterAssistantChatProps {
   isOpen: boolean;
   onToggle: () => void;
   characterId?: string;
-  characterPath?: string;
   characterName?: string;
   onCharacterUpdated?: () => void; // Callback when character is auto-saved
 }
@@ -24,7 +23,6 @@ export function CharacterAssistantChat({
   isOpen,
   onToggle,
   characterId,
-  characterPath,
   characterName,
   onCharacterUpdated,
 }: CharacterAssistantChatProps) {
@@ -33,14 +31,9 @@ export function CharacterAssistantChat({
   const [error, setError] = useState<string | null>(null);
   const [sessionStatus, setSessionStatus] = useState<string>('idle');
 
-  // Load or create character assistant session when character changes
+  // Load or create character assistant session when component mounts
   useEffect(() => {
     const loadOrCreateCharacterSession = async () => {
-      if (!characterPath) {
-        setSessionId(null);
-        return;
-      }
-
       setIsLoading(true);
       setError(null);
 
@@ -83,7 +76,7 @@ export function CharacterAssistantChat({
     };
 
     loadOrCreateCharacterSession();
-  }, [characterPath, characterId, characterName]);
+  }, []); // Load once on mount
 
   // Handle auto-save events
   const handleAutoSave = (type: 'skill' | 'character', id: string) => {

@@ -622,7 +622,6 @@ export default function Skills({ onChatContextChange }: SkillsProps) {
                 localStorage.setItem('isSkillChatOpen', JSON.stringify(!isChatOpen));
               }}
               skillId={selectedSkill?.id}
-              skillPath={selectedSkill?.id ? `skill_library/${selectedSkill.id}` : undefined}
               skillName={selectedSkill?.name}
               onSkillUpdated={async () => {
                 // Reload skills list and refresh current skill if one is selected
