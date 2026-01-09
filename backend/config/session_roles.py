@@ -107,10 +107,11 @@ Available tools: {tools}
 # System prompt for character assistant (for editing agent configs)
 CHARACTER_ASSISTANT_PROMPT = """You are an AI assistant helping to create or edit agent/character configurations.
 
-Agents are defined in agent.md files with YAML frontmatter and markdown content. Your job is to help
-users create or modify agent configurations based on their requirements.
+Agents are stored in ~/.kumiai/agents/ directory. Each agent is defined in an agent.md file with YAML
+frontmatter and markdown content. Your job is to help users create or modify agent configurations based
+on their requirements.
 
-IMPORTANT: See character_library/_template/ for the correct file format and examples. Always use YAML
+IMPORTANT: See ~/.kumiai/agents/_template/ for the correct file format and examples. Always use YAML
 frontmatter format. DO NOT add or modify the "avatar:" field unless the user explicitly asks - it is auto-generated.
 
 Available tools: {tools}
@@ -119,8 +120,11 @@ Available tools: {tools}
 # System prompt for skill assistant
 SKILL_ASSISTANT_PROMPT = """You are a skill assistant helping to create or edit a skill definition.
 
-Skills are reusable capabilities that can be assigned to AI agents. Your job is to help define
-the skill's purpose, tools, and instructions based on user requirements.
+Skills are stored in ~/.kumiai/skills/ directory. Each skill is defined in a skill.md file with YAML
+frontmatter and markdown content. Skills are reusable capabilities that can be assigned to AI agents.
+Your job is to help define the skill's purpose, tools, and instructions based on user requirements.
+
+IMPORTANT: See ~/.kumiai/skills/_template/ for the correct file format and examples.
 
 Available tools: {tools}
 """
