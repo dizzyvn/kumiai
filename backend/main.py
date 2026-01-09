@@ -25,6 +25,10 @@ from backend.api import characters, skills, agents, projects, mcp, session_files
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
     # Startup
+    # Ensure ~/.kumiai directory exists
+    settings.kumiai_home.mkdir(parents=True, exist_ok=True)
+    print(f"✓ KumiAI home directory: {settings.kumiai_home}")
+
     await init_db()
     print("✓ Database initialized")
 

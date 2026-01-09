@@ -242,7 +242,6 @@ async def init_db():
                 id=DEFAULT_PROJECT_ID,
                 name="Default Project",
                 description="Default project for sessions not assigned to a specific project",
-                color="#6B7280",
             )
             session.add(default_project)
             await session.commit()
