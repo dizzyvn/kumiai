@@ -1,0 +1,131 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-base: 'Noto Sans Display', 'Noto Emoji', sans-serif;
+    --font-mono: 'Consolas', 'Monaco', 'Courier New', monospace;
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    font-family: var(--font-base);
+    font-weight: 500;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    @apply bg-gray-50 text-gray-900;
+    line-height: 1.6;
+  }
+
+  code {
+    font-family: var(--font-mono);
+  }
+
+  /* Noto Emoji medium weight */
+  .noto-emoji-medium {
+    font-family: "Noto Emoji", sans-serif;
+    font-optical-sizing: auto;
+    font-weight: 500;
+    font-style: normal;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-gray-50;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-primary-200 rounded;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-primary-300;
+  }
+
+  /* Hide scrollbar utility */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@layer utilities {
+  /* Mobile responsive utilities */
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .mobile-only {
+    display: none;
+  }
+
+  .desktop-only {
+    display: block;
+  }
+
+  @media (max-width: 1023px) {
+    .mobile-only {
+      display: block;
+    }
+
+    .desktop-only {
+      display: none;
+    }
+  }
+
+  /* Safe area insets for notched devices (iOS) */
+  .safe-area-inset-top {
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .safe-area-inset-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .safe-area-inset-left {
+    padding-left: env(safe-area-inset-left);
+  }
+
+  .safe-area-inset-right {
+    padding-right: env(safe-area-inset-right);
+  }
+
+  /* Mobile drawer overlay */
+  .mobile-drawer-overlay {
+    @apply fixed inset-0 bg-black/20 backdrop-blur-sm z-40;
+  }
+
+  /* Mobile full-screen modal */
+  .mobile-modal {
+    @apply fixed inset-0 z-50 bg-white;
+  }
+
+  @media (min-width: 768px) {
+    .mobile-modal {
+      @apply relative inset-auto;
+    }
+  }
+
+  /* Prevent body scroll when modal/drawer is open */
+  .overflow-hidden-mobile {
+    @media (max-width: 1023px) {
+      overflow: hidden;
+    }
+  }
+}
