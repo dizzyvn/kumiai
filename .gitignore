@@ -91,6 +91,6 @@ projects/
 # Claude and Project files
 .claude/
 PROJECT.md
-agents/
+/agents/
 docs/
 backend/temp_uploads/

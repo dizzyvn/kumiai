@@ -14,6 +14,7 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 from backend.core.config import settings
+from backend.core.bootstrap import bootstrap
 from backend.core.database import init_db
 from backend.core.task_manager import get_task_manager
 from backend.sessions.session_registry import get_session_registry
@@ -25,9 +26,8 @@ from backend.api import characters, skills, agents, projects, mcp, session_files
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
     # Startup
-    # Ensure ~/.kumiai directory exists
-    settings.kumiai_home.mkdir(parents=True, exist_ok=True)
-    print(f"✓ KumiAI home directory: {settings.kumiai_home}")
+    # Bootstrap: Initialize directories and templates
+    bootstrap()
 
     await init_db()
     print("✓ Database initialized")
