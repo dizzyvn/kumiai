@@ -138,10 +138,10 @@ class CharacterFile:
 
 
 async def load_character_from_file(character_id: str) -> Optional[CharacterFile]:
-    """Load character data directly from character_library/{id}/agent.md file.
+    """Load character data directly from ~/.kumiai/agents/{id}/agent.md file.
 
     Args:
-        character_id: Character ID (directory name in character_library)
+        character_id: Character ID (directory name in ~/.kumiai/agents/)
 
     Returns:
         CharacterFile instance or None if file doesn't exist

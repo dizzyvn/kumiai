@@ -75,10 +75,10 @@ class AssistantSession(BaseSession):
 
 Working directory: {self.project_path}
 
-Each character is in its own subdirectory with an agent.md file (e.g., character_library/shitara/agent.md).
+Each character is in its own subdirectory with an agent.md file (e.g., ~/.kumiai/agents/shitara/agent.md).
 
 **IMPORTANT - File Format:**
-- Check character_library/_template/agent.md for the complete format and structure
+- Check ~/.kumiai/agents/_template/agent.md for the complete format and structure
 - Use YAML frontmatter (skills, color, personality, etc.)
 - Follow the markdown template structure
 - DO NOT add or modify the "avatar:" field unless explicitly requested - it is auto-generated
@@ -91,10 +91,10 @@ Focus on understanding user needs and creating clear, well-structured agent defi
 
 Working directory: {self.project_path}
 
-Each skill is in its own subdirectory with a skill.md file (e.g., skill_library/pdf_reader/skill.md).
+Each skill is in its own subdirectory with a skill.md file (e.g., ~/.kumiai/skills/pdf_reader/skill.md).
 
 **IMPORTANT - File Format:**
-- Check skill_library/_template/skill.md for the complete format and structure
+- Check ~/.kumiai/skills/_template/skill.md for the complete format and structure
 - Use YAML frontmatter (name, description, allowed-tools, allowed-mcp-servers, icon, etc.)
 - Follow the markdown template structure
 - Browse existing skills for examples

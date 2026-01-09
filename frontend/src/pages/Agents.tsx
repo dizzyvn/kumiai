@@ -71,7 +71,7 @@ export default function Agents({ onChatContextChange }: AgentsProps) {
       onChatContextChange({
         role: 'character_assistant',
         name: 'Agent Library',
-        description: 'Manage team members - create new agents, modify existing ones, or delete agents. Agents are stored in the character_library directory, each with an agent.md configuration file. IMPORTANT: See character_library/_template/ for the correct file format and examples. Always use YAML frontmatter format. DO NOT add or modify the "avatar:" field unless the user explicitly asks - it is auto-generated. NOTE: Agent capabilities (tools, MCP servers, skills) are stored in the DATABASE, NOT in the agent.md file. The agent.md file contains ONLY personality and system prompt content.',
+        description: 'Manage team members - create new agents, modify existing ones, or delete agents. Agents are stored in ~/.kumiai/agents/ directory, each with an agent.md configuration file. IMPORTANT: See ~/.kumiai/agents/_template/ for the correct file format and examples. Always use YAML frontmatter format. DO NOT add or modify the "avatar:" field unless the user explicitly asks - it is auto-generated. NOTE: Agent capabilities (tools, MCP servers, skills) are stored in the DATABASE, NOT in the agent.md file. The agent.md file contains ONLY personality and system prompt content.',
         data: {
           project_path: paths.characterLibrary,
         },

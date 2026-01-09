@@ -122,10 +122,10 @@ class SkillFile:
 
 
 async def load_skill_from_file(skill_id: str) -> Optional[SkillFile]:
-    """Load skill data directly from skill_library/{id}/SKILL.md file.
+    """Load skill data directly from ~/.kumiai/skills/{id}/skill.md file.
 
     Args:
-        skill_id: Skill ID (directory name in skill_library)
+        skill_id: Skill ID (directory name in ~/.kumiai/skills/)
 
     Returns:
         SkillFile instance or None if file doesn't exist

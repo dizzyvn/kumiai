@@ -109,7 +109,7 @@ async def create_project(
             if pm_character is None:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"PM character '{request.pm_id}' not found in character_library/",
+                    detail=f"PM character '{request.pm_id}' not found in ~/.kumiai/agents/",
                 )
             logger.info(f"PM character '{pm_character.name}' validated successfully")
         except ValueError as e:

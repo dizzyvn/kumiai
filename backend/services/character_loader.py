@@ -50,7 +50,7 @@ class CharacterLoader:
         Load character from agent.md file with caching.
 
         Args:
-            character_id: Character identifier (directory name in character_library/)
+            character_id: Character identifier (directory name in ~/.kumiai/agents/)
 
         Returns:
             Character object with metadata and content
@@ -67,7 +67,7 @@ class CharacterLoader:
             character = await load_character_from_file(character_id)
             if character is None:
                 raise ValueError(
-                    f"Character '{character_id}' not found in character_library/"
+                    f"Character '{character_id}' not found in ~/.kumiai/agents/"
                 )
 
             self._character_cache[character_id] = character

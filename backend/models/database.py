@@ -22,7 +22,7 @@ class Character(Base):
 
     __tablename__ = "characters"
 
-    id = Column(String, primary_key=True)  # Directory name in character_library/
+    id = Column(String, primary_key=True)  # Directory name in ~/.kumiai/agents/
 
     # Capabilities (UI-managed, structured)
     allowed_tools = Column(JSON, default=list)  # e.g., ["Read", "Write", "Edit", "Bash"]

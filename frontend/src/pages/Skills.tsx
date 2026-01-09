@@ -66,7 +66,7 @@ export default function Skills({ onChatContextChange }: SkillsProps) {
       onChatContextChange({
         role: 'skill_assistant',
         name: 'Skill Library',
-        description: 'Manage skills - create new skills, modify existing ones, or delete skills. Skills are stored in the skill_library directory, each with a skill.md configuration file. IMPORTANT: Skills are now pure documentation with NO tool declarations. See skill_library/_template/ for the correct file format. Each skill has category, license, and version fields in YAML frontmatter.',
+        description: 'Manage skills - create new skills, modify existing ones, or delete skills. Skills are stored in ~/.kumiai/skills/ directory, each with a skill.md configuration file. IMPORTANT: Skills are now pure documentation with NO tool declarations. See ~/.kumiai/skills/_template/ for the correct file format. Each skill has category, license, and version fields in YAML frontmatter.',
         data: {
           project_path: paths.skillLibrary,
         },
