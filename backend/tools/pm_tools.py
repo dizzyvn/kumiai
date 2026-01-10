@@ -409,10 +409,14 @@ async def contact_pm(args: dict[str, Any]) -> dict[str, Any]:
     logger.info(f"[PM_TOOLS] contact_pm called: {message[:100]}...")
 
     try:
-        # Route to PM instance
-        pm_instance_id = await _route_to_pm_from_session(session_id)
+        # Route to PM instance with timeout protection
+        import asyncio
+        pm_instance_id = await asyncio.wait_for(
+            _route_to_pm_from_session(session_id),
+            timeout=10.0  # 10-second timeout for DB query
+        )
 
-        # Use shared messaging engine
+        # Use shared messaging engine (fire-and-forget, returns immediately)
         result = await _send_cross_session_message(
             sender_session_id=session_id,
             recipient_instance_id=pm_instance_id,
@@ -426,6 +430,14 @@ async def contact_pm(args: dict[str, Any]) -> dict[str, Any]:
             }]
         }
 
+    except asyncio.TimeoutError:
+        logger.error(f"[PM_TOOLS] Timeout routing to PM from session {session_id[:8]} (database query hung)")
+        return {
+            "content": [{
+                "type": "text",
+                "text": "✗ Failed to contact PM: Database query timed out (system may be overloaded)"
+            }]
+        }
     except Exception as e:
         logger.error(f"[PM_TOOLS] Error contacting PM: {e}", exc_info=True)
         return {
