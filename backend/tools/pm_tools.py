@@ -235,6 +235,44 @@ async def _validate_pm_routing(
         )
 
 
+async def _enqueue_with_error_notification(
+    recipient_instance_id: str,
+    query_msg: "QueryMessage",
+    sender_instance_id: str
+) -> None:
+    """
+    Enqueue message with error handling and sender notification.
+
+    This wrapper handles background message delivery failures by logging
+    errors and notifying the sender via SSE when delivery fails.
+
+    Args:
+        recipient_instance_id: Target instance ID
+        query_msg: Message to deliver
+        sender_instance_id: Sender's instance ID for error notifications
+    """
+    from ..services.session_executor import session_executor
+
+    try:
+        await session_executor.enqueue(recipient_instance_id, query_msg)
+        logger.info(
+            f"[MESSAGING_ENGINE] ✅ Message delivered to {recipient_instance_id[:8]} "
+            f"from {sender_instance_id[:8]}"
+        )
+    except Exception as e:
+        logger.error(
+            f"[MESSAGING_ENGINE] ❌ Failed to deliver message to {recipient_instance_id}: {e}",
+            exc_info=True
+        )
+        # Notify sender of delivery failure via SSE
+        await sse_manager.broadcast(sender_instance_id, {
+            "type": "message_delivery_failed",
+            "recipient_instance_id": recipient_instance_id,
+            "error": str(e),
+            "timestamp": "now"
+        })
+
+
 async def _send_cross_session_message(
     sender_session_id: str,
     recipient_instance_id: str,
@@ -255,7 +293,8 @@ async def _send_cross_session_message(
     Returns:
         Confirmation dict with content array
     """
-    from ..services.session_executor import session_executor, QueryMessage, QueryType
+    from ..services.session_executor import QueryMessage, QueryType
+    from ..core.task_manager import get_task_manager
 
     # Resolve sender context (single optimized query)
     sender = await _resolve_sender_context(sender_session_id)
@@ -270,30 +309,33 @@ async def _send_cross_session_message(
         message=message,
         sender_role=sender["role"],
         sender_name=sender["name"],
-        sender_id=sender["instance_id"],  # ✅ Now tracked!
+        sender_id=sender["instance_id"],
         query_type=QueryType.INTERRUPT if priority == "urgent" else QueryType.NORMAL
     )
 
-    # Enqueue message
-    await session_executor.enqueue(recipient_instance_id, query_msg)
-
-    # Get queue status for feedback
-    queue_size = session_executor.get_queue_size(recipient_instance_id)
-    is_processing = session_executor.is_processing(recipient_instance_id)
-
-    status_text = "processing" if is_processing else f"queued ({queue_size} message{'s' if queue_size != 1 else ''})"
+    # 🔥 FIRE-AND-FORGET: Dispatch message delivery to background task
+    # This prevents blocking if the target session is hung or unresponsive
+    task_manager = get_task_manager()
+    task_manager.create_task(
+        _enqueue_with_error_notification(
+            recipient_instance_id=recipient_instance_id,
+            query_msg=query_msg,
+            sender_instance_id=sender["instance_id"]
+        ),
+        name=f"deliver_message_{recipient_instance_id[:8]}"
+    )
 
     logger.info(
-        f"[MESSAGING_ENGINE] Message {status_text} for {recipient_instance_id[:8]} "
-        f"(queue: {queue_size}, processing: {is_processing})"
+        f"[MESSAGING_ENGINE] 🚀 Message dispatched to background for {recipient_instance_id[:8]} "
+        f"(priority: {priority})"
     )
 
     return {
         "success": True,
         "recipient_instance_id": recipient_instance_id,
         "sender_instance_id": sender["instance_id"],
-        "status": status_text,
-        "queue_size": queue_size
+        "status": "dispatched",
+        "note": "Message delivery in progress (fire-and-forget)"
     }
 
 
