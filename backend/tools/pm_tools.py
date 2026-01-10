@@ -1046,6 +1046,78 @@ async def update_instance_stage(args: dict[str, Any]) -> dict[str, Any]:
         }
 
 
+async def _contact_session_background(
+    session_id: str,
+    project_id: str,
+    instance_id: str,
+    message: str
+) -> None:
+    """
+    Background task for session contact with error notifications.
+
+    Handles validation and message delivery asynchronously, notifying
+    the sender via SSE if any step fails.
+
+    Args:
+        session_id: Sender's Claude SDK session ID (PM)
+        project_id: Project ID for validation
+        instance_id: Target instance ID
+        message: Message to send
+    """
+    import asyncio
+    from ..services.claude_client import client_manager
+
+    sender_instance_id = None
+    try:
+        # Get sender instance ID for error notifications
+        sender_instance_id = client_manager.get_instance_id_from_session(session_id)
+
+        # Validate PM permissions and same-project routing with timeout
+        await asyncio.wait_for(
+            _validate_pm_routing(session_id, project_id, instance_id),
+            timeout=10.0
+        )
+
+        logger.info(
+            f"[PM_TOOLS] ✅ Validated PM {sender_instance_id[:8] if sender_instance_id else 'unknown'} -> {instance_id[:8]}"
+        )
+
+        # Send message (this is already fire-and-forget internally)
+        await _send_cross_session_message(
+            sender_session_id=session_id,
+            recipient_instance_id=instance_id,
+            message=message
+        )
+
+        logger.info(
+            f"[PM_TOOLS] ✅ Session contact completed: {sender_instance_id[:8] if sender_instance_id else 'unknown'} -> {instance_id[:8]}"
+        )
+
+    except asyncio.TimeoutError:
+        logger.error(
+            f"[PM_TOOLS] ⏱️ Timeout validating PM routing (database query hung)"
+        )
+        if sender_instance_id:
+            await sse_manager.broadcast(sender_instance_id, {
+                "type": "session_contact_failed",
+                "target_instance_id": instance_id,
+                "error": "Database query timed out - system may be overloaded",
+                "timestamp": "now"
+            })
+    except Exception as e:
+        logger.error(
+            f"[PM_TOOLS] ❌ Failed to contact session {instance_id}: {e}",
+            exc_info=True
+        )
+        if sender_instance_id:
+            await sse_manager.broadcast(sender_instance_id, {
+                "type": "session_contact_failed",
+                "target_instance_id": instance_id,
+                "error": str(e),
+                "timestamp": "now"
+            })
+
+
 @tool(
     "contact_session",
     "Send a message to a specific agent session to provide guidance, assign tasks, or reactivate idle sessions",
@@ -1107,29 +1179,30 @@ async def contact_session(args: dict[str, Any]) -> dict[str, Any]:
 
         logger.info(f"[PM_TOOLS] Sending message to instance {instance_id} in project {project_id}: {message[:100]}...")
 
-        # Validate PM permissions and same-project routing
-        await _validate_pm_routing(session_id, project_id, instance_id)
-
-        # Use shared messaging engine
-        result = await _send_cross_session_message(
-            sender_session_id=session_id,
-            recipient_instance_id=instance_id,
-            message=message
+        # 🔥 FIRE-AND-FORGET: Dispatch session contact to background task
+        # This prevents blocking if database query hangs or target is unresponsive
+        from ..core.task_manager import get_task_manager
+        task_manager = get_task_manager()
+        task_manager.create_task(
+            _contact_session_background(session_id, project_id, instance_id, message),
+            name=f"contact_session_{instance_id[:8]}"
         )
+
+        logger.info(f"[PM_TOOLS] 🚀 Session contact dispatched to background for {instance_id[:8]}")
 
         return {
             "content": [{
                 "type": "text",
-                "text": f"✓ Message {result['status']} for instance {instance_id[:8]}"
+                "text": f"✓ Message to instance {instance_id[:8]} dispatched\n\nYour message is being delivered."
             }]
         }
 
     except Exception as e:
-        logger.error(f"[PM_TOOLS] Error sending message to session: {e}", exc_info=True)
+        logger.error(f"[PM_TOOLS] Error dispatching message to session: {e}", exc_info=True)
         return {
             "content": [{
                 "type": "text",
-                "text": f"✗ Failed to send message: {str(e)}"
+                "text": f"✗ Failed to dispatch message: {str(e)}"
             }]
         }
 
