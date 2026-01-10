@@ -685,7 +685,8 @@ class BaseSession(ABC):
 
         except Exception as e:
             error_message = str(e)
-            logger.error(f"[SESSION] Error during query execution: {error_message}")
+            error_type = type(e).__name__
+            logger.error(f"[SESSION] Error during query execution: {error_message} (type: {error_type})")
 
             # Clear any buffered deltas to prevent corruption
             if 'batched_deltas' in locals():
@@ -695,8 +696,30 @@ class BaseSession(ABC):
             # No need to delete anything - the conversation shows what was completed before error
             logger.info(f"[SESSION] Error occurred - partial blocks already saved via transitions")
 
+            # Check if this is a terminated process error (subprocess crashed)
+            is_process_terminated = (
+                error_type == "CLIConnectionError" and
+                ("terminated process" in error_message.lower() or "exit code" in error_message.lower())
+            )
+
+            if is_process_terminated:
+                logger.error(
+                    f"[SESSION] Claude SDK subprocess has died for {self.instance_id}. "
+                    f"Invalidating session from registry to force recreation on next query."
+                )
+                # Remove session from registry so next query will recreate the client
+                from backend.sessions import get_session_registry
+                registry = get_session_registry()
+                registry.remove_session(self.instance_id)
+
+                error_message = (
+                    f"Claude SDK subprocess crashed unexpectedly. "
+                    f"The session will be recreated automatically when you send your next message. "
+                    f"Please try your request again."
+                )
+
             # Check if this is a resume failure (conversation not found)
-            if "No conversation found" in error_message and self.session_id:
+            elif "No conversation found" in error_message and self.session_id:
                 logger.warning(f"[SESSION] Resume failed - conversation not found for session_id: {self.session_id}")
                 logger.warning(f"[SESSION] Claude Code conversation may have been deleted or is in a different directory")
                 logger.warning(f"[SESSION] Clearing stale session_id from database...")
@@ -743,6 +766,95 @@ class BaseSession(ABC):
         await self._broadcast_event(idle_event)
         yield idle_event
         logger.info(f"[SESSION] Execute query completed successfully")
+
+    def is_client_alive(self) -> bool:
+        """
+        Check if the Claude SDK client subprocess is still alive.
+
+        Returns:
+            True if client exists and subprocess is running, False otherwise
+        """
+        if not self.client:
+            return False
+
+        try:
+            # Access the underlying transport to check process status
+            # The ClaudeSDKClient wraps a transport object
+            if hasattr(self.client, '_transport'):
+                transport = self.client._transport
+                # Check if transport has a process attribute (SubprocessCLITransport)
+                if hasattr(transport, '_process') and transport._process:
+                    # poll() returns None if process is still running
+                    # Returns exit code if process has terminated
+                    exit_code = transport._process.poll()
+                    if exit_code is not None:
+                        logger.warning(
+                            f"[SESSION] Client subprocess is dead for {self.instance_id} "
+                            f"(exit code: {exit_code})"
+                        )
+                        return False
+                    return True
+
+            # If we can't access the process, assume it's alive
+            # (better to fail later with proper error than assume dead)
+            logger.debug(f"[SESSION] Cannot check process health for {self.instance_id}, assuming alive")
+            return True
+
+        except Exception as e:
+            logger.warning(f"[SESSION] Error checking client health for {self.instance_id}: {e}")
+            # Assume alive on error to avoid false positives
+            return True
+
+    async def recreate_client(self) -> bool:
+        """
+        Recreate the Claude SDK client after a crash.
+        Attempts to resume existing session if session_id is available.
+
+        Returns:
+            True if client was successfully recreated, False otherwise
+        """
+        logger.info(f"[SESSION] Recreating client for {self.instance_id} (session_id: {self.session_id})")
+
+        try:
+            # Close existing client if it exists
+            if self.client:
+                try:
+                    # Don't await cleanup, just mark it for garbage collection
+                    self.client = None
+                    logger.debug(f"[SESSION] Released old client reference for {self.instance_id}")
+                except Exception as e:
+                    logger.warning(f"[SESSION] Error releasing old client: {e}")
+
+            # Create new client with existing session_id if available
+            existing_session_id = self.session_id
+            options = await self._create_claude_options()
+
+            # Create and connect new client
+            from backend.services.claude_client import ClaudeSDKClient
+            self.client = ClaudeSDKClient(options=options)
+
+            logger.info(f"[SESSION] Connecting recreated client for {self.instance_id}...")
+            await asyncio.wait_for(
+                self.client.connect(),
+                timeout=CONNECTION_TIMEOUT_SECONDS
+            )
+
+            if existing_session_id:
+                logger.info(
+                    f"[SESSION] ✓ Client recreated with session resumption for {self.instance_id} "
+                    f"(session_id: {existing_session_id})"
+                )
+            else:
+                logger.info(f"[SESSION] ✓ Client recreated with fresh session for {self.instance_id}")
+
+            return True
+
+        except Exception as e:
+            logger.error(
+                f"[SESSION] Failed to recreate client for {self.instance_id}: {e}",
+                exc_info=True
+            )
+            return False
 
     async def cancel(self):
         """Cancel ongoing session execution."""

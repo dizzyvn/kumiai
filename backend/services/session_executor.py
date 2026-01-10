@@ -550,8 +550,27 @@ class SessionExecutor:
         # Try to get existing session from registry
         session = registry.get_session(instance_id)
         if session:
-            logger.info(f"[SESSION_EXECUTOR] Using cached session: {instance_id}")
-            return session
+            # Check if client subprocess is still alive
+            if not session.is_client_alive():
+                logger.warning(
+                    f"[SESSION_EXECUTOR] Cached session {instance_id} has dead client, "
+                    f"attempting to recreate..."
+                )
+                # Try to recreate the client (will resume session if session_id exists)
+                if await session.recreate_client():
+                    logger.info(f"[SESSION_EXECUTOR] Successfully recreated client for {instance_id}")
+                    return session
+                else:
+                    # Failed to recreate, remove from registry and reload from database
+                    logger.error(
+                        f"[SESSION_EXECUTOR] Failed to recreate client for {instance_id}, "
+                        f"removing from registry and reloading"
+                    )
+                    registry.remove_session(instance_id)
+                    # Fall through to reload from database
+            else:
+                logger.info(f"[SESSION_EXECUTOR] Using cached session: {instance_id}")
+                return session
 
         # Load session metadata from database
         async with AsyncSessionLocal() as db:

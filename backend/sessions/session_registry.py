@@ -249,33 +249,57 @@ class SessionRegistry:
                 # Continue running despite errors
 
     async def _cleanup_stale_sessions(self):
-        """Clean up sessions that have been idle for too long."""
+        """Clean up sessions that have been idle for too long or have dead clients."""
         now = time.time()
         stale_sessions = []
+        dead_client_sessions = []
 
-        # Find stale sessions
+        # Find stale sessions and dead client sessions
         for instance_id, last_time in self._last_activity.items():
-            if now - last_time > self._session_timeout:
+            session = self._sessions.get(instance_id)
+            if not session:
+                continue
+
+            # Check for dead client subprocess
+            if not session.is_client_alive():
+                logger.warning(
+                    f"[REGISTRY] Session {instance_id} has dead client subprocess"
+                )
+                dead_client_sessions.append(instance_id)
+            # Check for idle timeout
+            elif now - last_time > self._session_timeout:
                 stale_sessions.append(instance_id)
 
-        if not stale_sessions:
-            return
+        # Clean up dead client sessions first (higher priority)
+        if dead_client_sessions:
+            logger.warning(
+                f"[REGISTRY] Found {len(dead_client_sessions)} sessions with dead clients to clean up"
+            )
+            for instance_id in dead_client_sessions:
+                try:
+                    await self._cleanup_session(instance_id)
+                    self._total_cleaned += 1
+                except Exception as e:
+                    logger.error(
+                        f"[REGISTRY] Error cleaning up dead client session {instance_id}: {e}",
+                        exc_info=True,
+                    )
 
-        logger.info(
-            f"[REGISTRY] Found {len(stale_sessions)} stale sessions to clean up "
-            f"(idle > {self._session_timeout}s)"
-        )
-
-        # Clean up each stale session
-        for instance_id in stale_sessions:
-            try:
-                await self._cleanup_session(instance_id)
-                self._total_cleaned += 1
-            except Exception as e:
-                logger.error(
-                    f"[REGISTRY] Error cleaning up session {instance_id}: {e}",
-                    exc_info=True,
-                )
+        # Clean up idle sessions
+        if stale_sessions:
+            logger.info(
+                f"[REGISTRY] Found {len(stale_sessions)} stale sessions to clean up "
+                f"(idle > {self._session_timeout}s)"
+            )
+            for instance_id in stale_sessions:
+                try:
+                    await self._cleanup_session(instance_id)
+                    self._total_cleaned += 1
+                except Exception as e:
+                    logger.error(
+                        f"[REGISTRY] Error cleaning up session {instance_id}: {e}",
+                        exc_info=True,
+                    )
 
     async def _cleanup_session(self, instance_id: str):
         """
