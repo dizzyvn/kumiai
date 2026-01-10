@@ -775,6 +775,7 @@ class BaseSession(ABC):
             True if client exists and subprocess is running, False otherwise
         """
         if not self.client:
+            logger.debug(f"[SESSION] is_client_alive: No client for {self.instance_id}")
             return False
 
         try:
@@ -793,6 +794,7 @@ class BaseSession(ABC):
                             f"(exit code: {exit_code})"
                         )
                         return False
+                    logger.debug(f"[SESSION] is_client_alive: Process alive for {self.instance_id}")
                     return True
 
             # If we can't access the process, assume it's alive
@@ -827,17 +829,27 @@ class BaseSession(ABC):
 
             # Create new client with existing session_id if available
             existing_session_id = self.session_id
+            logger.info(f"[SESSION] Creating Claude options for recreation (will resume: {existing_session_id is not None})...")
             options = await self._create_claude_options()
 
             # Create and connect new client
             from backend.services.claude_client import ClaudeSDKClient
+            logger.info(f"[SESSION] Creating new ClaudeSDKClient instance...")
             self.client = ClaudeSDKClient(options=options)
 
-            logger.info(f"[SESSION] Connecting recreated client for {self.instance_id}...")
-            await asyncio.wait_for(
-                self.client.connect(),
-                timeout=CONNECTION_TIMEOUT_SECONDS
-            )
+            logger.info(f"[SESSION] Connecting recreated client for {self.instance_id} (timeout: {CONNECTION_TIMEOUT_SECONDS}s)...")
+            try:
+                await asyncio.wait_for(
+                    self.client.connect(),
+                    timeout=CONNECTION_TIMEOUT_SECONDS
+                )
+                logger.info(f"[SESSION] ✓ Connection successful for recreated client")
+            except asyncio.TimeoutError:
+                logger.error(f"[SESSION] ✗ Connection timeout after {CONNECTION_TIMEOUT_SECONDS}s for recreated client")
+                raise
+            except Exception as conn_error:
+                logger.error(f"[SESSION] ✗ Connection failed for recreated client: {conn_error}")
+                raise
 
             if existing_session_id:
                 logger.info(
