@@ -343,6 +343,69 @@ async def _send_cross_session_message(
 # Tools for Orchestrators - Contact PM
 # ============================================================================
 
+async def _contact_pm_background(session_id: str, message: str) -> None:
+    """
+    Background task for PM contact with error notifications.
+
+    Handles routing to PM and message delivery asynchronously, notifying
+    the sender via SSE if any step fails.
+
+    Args:
+        session_id: Sender's Claude SDK session ID
+        message: Message to send to PM
+    """
+    import asyncio
+    from ..services.claude_client import client_manager
+
+    sender_instance_id = None
+    try:
+        # Get sender instance ID for error notifications
+        sender_instance_id = client_manager.get_instance_id_from_session(session_id)
+
+        # Route to PM instance with timeout protection
+        pm_instance_id = await asyncio.wait_for(
+            _route_to_pm_from_session(session_id),
+            timeout=10.0  # 10-second timeout for DB query
+        )
+
+        logger.info(
+            f"[PM_TOOLS] 🔍 Routed {sender_instance_id[:8] if sender_instance_id else 'unknown'} -> PM {pm_instance_id[:8]}"
+        )
+
+        # Send message (this is already fire-and-forget internally)
+        await _send_cross_session_message(
+            sender_session_id=session_id,
+            recipient_instance_id=pm_instance_id,
+            message=message
+        )
+
+        logger.info(
+            f"[PM_TOOLS] ✅ PM contact completed for {sender_instance_id[:8] if sender_instance_id else 'unknown'}"
+        )
+
+    except asyncio.TimeoutError:
+        logger.error(
+            f"[PM_TOOLS] ⏱️ Timeout routing to PM from session {session_id[:8]} (database query hung)"
+        )
+        if sender_instance_id:
+            await sse_manager.broadcast(sender_instance_id, {
+                "type": "pm_contact_failed",
+                "error": "Database query timed out - system may be overloaded",
+                "timestamp": "now"
+            })
+    except Exception as e:
+        logger.error(
+            f"[PM_TOOLS] ❌ Failed to contact PM from session {session_id[:8]}: {e}",
+            exc_info=True
+        )
+        if sender_instance_id:
+            await sse_manager.broadcast(sender_instance_id, {
+                "type": "pm_contact_failed",
+                "error": str(e),
+                "timestamp": "now"
+            })
+
+
 @tool(
     "contact_pm",
     "Send a SHORT, CONCISE message to the PM (max 2-3 sentences) to request guidance, report status, or ask for help",
@@ -408,44 +471,23 @@ async def contact_pm(args: dict[str, Any]) -> dict[str, Any]:
 
     logger.info(f"[PM_TOOLS] contact_pm called: {message[:100]}...")
 
-    try:
-        # Route to PM instance with timeout protection
-        import asyncio
-        pm_instance_id = await asyncio.wait_for(
-            _route_to_pm_from_session(session_id),
-            timeout=10.0  # 10-second timeout for DB query
-        )
+    # 🔥 FIRE-AND-FORGET: Dispatch PM contact to background task
+    # This prevents blocking if database query hangs or PM is unresponsive
+    from ..core.task_manager import get_task_manager
+    task_manager = get_task_manager()
+    task_manager.create_task(
+        _contact_pm_background(session_id, message),
+        name=f"contact_pm_{session_id[:8]}"
+    )
 
-        # Use shared messaging engine (fire-and-forget, returns immediately)
-        result = await _send_cross_session_message(
-            sender_session_id=session_id,
-            recipient_instance_id=pm_instance_id,
-            message=message
-        )
+    logger.info(f"[PM_TOOLS] 🚀 PM contact dispatched to background for session {session_id[:8]}")
 
-        return {
-            "content": [{
-                "type": "text",
-                "text": f"✓ Message sent to PM successfully\n\nYour message has been delivered to the Project Manager."
-            }]
-        }
-
-    except asyncio.TimeoutError:
-        logger.error(f"[PM_TOOLS] Timeout routing to PM from session {session_id[:8]} (database query hung)")
-        return {
-            "content": [{
-                "type": "text",
-                "text": "✗ Failed to contact PM: Database query timed out (system may be overloaded)"
-            }]
-        }
-    except Exception as e:
-        logger.error(f"[PM_TOOLS] Error contacting PM: {e}", exc_info=True)
-        return {
-            "content": [{
-                "type": "text",
-                "text": f"✗ Failed to contact PM: {str(e)}"
-            }]
-        }
+    return {
+        "content": [{
+            "type": "text",
+            "text": "✓ Message to PM dispatched\n\nYour message is being delivered to the Project Manager."
+        }]
+    }
 
 
 # ============================================================================
