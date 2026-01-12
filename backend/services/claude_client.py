@@ -11,7 +11,7 @@ import asyncio
 import logging
 
 # Import PM tools
-from ..tools.pm_tools import contact_pm, remind, show_file, PM_MANAGEMENT_TOOLS
+from ..tools.pm_tools import contact_pm, remind, show_file, contact_session_specialist, PM_MANAGEMENT_TOOLS
 
 # Import skill-assistant tools
 from ..tools.skill_assistant_tools import SKILL_ASSISTANT_TOOLS
@@ -182,7 +182,7 @@ async def normalize_file_path_hook(input_data: dict, tool_use_id: str, context: 
 common_tools = create_sdk_mcp_server(
     name="common_tools",
     version="1.0.0",
-    tools=[contact_pm, remind, show_file]  # Inter-agent communication + self-management + file display
+    tools=[contact_pm, remind, show_file, contact_session_specialist]  # Inter-agent communication + self-management + file display
 )
 
 # Backward compatibility alias
@@ -704,21 +704,23 @@ class ClaudeClientManager:
                         project_description = project.description or ""
                         team_member_ids = project.team_member_ids or []
 
-                        # Regenerate PROJECT.md
-                        logger.info(f"[RESUME] Regenerating PROJECT.md for PM session")
-                        from ..utils.context_files import generate_project_md
-                        try:
-                            await generate_project_md(
-                                project_path=instance.project_path,
-                                project_id=instance.project_id,
-                                project_name=project.name,
-                                project_description=project.description,
-                                team_member_ids=project.team_member_ids,
-                                pm_character_id=project.pm_id,
-                            )
-                            logger.info(f"[RESUME] PROJECT.md regenerated successfully")
-                        except Exception as e:
-                            logger.warning(f"[RESUME] Failed to regenerate PROJECT.md: {e}")
+                        # NOTE: PROJECT.md regeneration disabled to preserve custom edits
+                        # PROJECT.md is only generated once during initial project creation
+                        # If you need to regenerate it, manually delete PROJECT.md and recreate the project
+                        # logger.info(f"[RESUME] Regenerating PROJECT.md for PM session")
+                        # from ..utils.context_files import generate_project_md
+                        # try:
+                        #     await generate_project_md(
+                        #         project_path=instance.project_path,
+                        #         project_id=instance.project_id,
+                        #         project_name=project.name,
+                        #         project_description=project.description,
+                        #         team_member_ids=project.team_member_ids,
+                        #         pm_character_id=project.pm_id,
+                        #     )
+                        #     logger.info(f"[RESUME] PROJECT.md regenerated successfully")
+                        # except Exception as e:
+                        #     logger.warning(f"[RESUME] Failed to regenerate PROJECT.md: {e}")
 
                 # Build PM system prompt
                 pm_instructions = f"""

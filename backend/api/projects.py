@@ -504,16 +504,18 @@ async def recreate_pm_session(project_id: str, db: AsyncSession = Depends(get_db
         pm_instance_id = f"pm-{uuid.uuid4().hex[:8]}"
         logger.info(f"Generated new PM instance_id: {pm_instance_id}")
 
-        # Regenerate PROJECT.md for PM
-        from ..utils.context_files import generate_project_md
-        await generate_project_md(
-            project_path=project.path,
-            project_id=project.id,
-            project_name=project.name,
-            project_description=project.description,
-            team_member_ids=project.team_member_ids,
-            pm_character_id=project.pm_id,
-        )
+        # NOTE: PROJECT.md regeneration disabled to preserve custom edits
+        # PROJECT.md is only generated once during initial project creation
+        # If you need to regenerate it, manually delete PROJECT.md and recreate the project
+        # from ..utils.context_files import generate_project_md
+        # await generate_project_md(
+        #     project_path=project.path,
+        #     project_id=project.id,
+        #     project_name=project.name,
+        #     project_description=project.description,
+        #     team_member_ids=project.team_member_ids,
+        #     pm_character_id=project.pm_id,
+        # )
 
         # Update project with new PM instance ID first
         project.pm_instance_id = pm_instance_id
