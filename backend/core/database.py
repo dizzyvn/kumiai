@@ -10,10 +10,12 @@ engine = create_async_engine(
     echo=False,
     future=True,
     connect_args={
-        "timeout": 30,  # Increase timeout to 30 seconds
+        "timeout": 60,  # Increase timeout to 60 seconds for better concurrent write handling
         "check_same_thread": False,  # Allow multiple threads
     },
     pool_pre_ping=True,  # Verify connections before using
+    pool_size=20,  # Increase pool size to handle more concurrent connections
+    max_overflow=10,  # Allow up to 30 total connections (20 + 10)
 )
 
 # Create async session factory
@@ -47,7 +49,11 @@ async def init_db():
     async with engine.begin() as conn:
         # Enable WAL mode for better concurrency
         await conn.execute(text("PRAGMA journal_mode=WAL"))
-        await conn.execute(text("PRAGMA busy_timeout=30000"))  # 30 seconds
+        await conn.execute(text("PRAGMA busy_timeout=60000"))  # 60 seconds to match connection timeout
+        # Additional optimizations for concurrent writes
+        await conn.execute(text("PRAGMA synchronous=NORMAL"))  # Balance between safety and speed
+        await conn.execute(text("PRAGMA cache_size=-64000"))  # 64MB cache (negative = KB)
+        await conn.execute(text("PRAGMA temp_store=MEMORY"))  # Store temp tables in memory
         await conn.run_sync(Base.metadata.create_all)
 
         # Migration: Add project_id column to sessions table if it doesn't exist

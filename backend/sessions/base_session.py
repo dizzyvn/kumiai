@@ -943,132 +943,161 @@ class BaseSession(ABC):
 
     async def _store_session(self):
         """Store or update session instance in database."""
-        async with AsyncSessionLocal() as db:
-            try:
-                # Check if session already exists
-                from sqlalchemy import select
-                result = await db.execute(
-                    select(AgentInstance).where(
-                        AgentInstance.instance_id == self.instance_id
-                    )
-                )
-                existing = result.scalar_one_or_none()
+        try:
+            # Add timeout protection to prevent indefinite hangs from database locks
+            async with asyncio.timeout(10.0):  # 10 second timeout
+                async with AsyncSessionLocal() as db:
+                    try:
+                        # Check if session already exists
+                        from sqlalchemy import select
+                        result = await db.execute(
+                            select(AgentInstance).where(
+                                AgentInstance.instance_id == self.instance_id
+                            )
+                        )
+                        existing = result.scalar_one_or_none()
 
-                if existing:
-                    # Update existing session
-                    existing.session_id = self.session_id
-                    existing.status = "idle"
-                    existing.role = self.role.value
-                    existing.actual_tools = self._configured_tools
-                    existing.actual_mcp_servers = self._configured_mcp_servers
-                else:
-                    # Create new session record
-                    # Note: character_name, character_avatar, character_color are not in DB model
-                    # They're stored in memory for display purposes only
+                        if existing:
+                            # Update existing session
+                            existing.session_id = self.session_id
+                            existing.status = "idle"
+                            existing.role = self.role.value
+                            existing.actual_tools = self._configured_tools
+                            existing.actual_mcp_servers = self._configured_mcp_servers
+                        else:
+                            # Create new session record
+                            # Note: character_name, character_avatar, character_color are not in DB model
+                            # They're stored in memory for display purposes only
 
-                    # Determine project root path
-                    # If session is in .sessions/ subdirectory, use project root (parent.parent)
-                    # Otherwise, use the project_path as-is
-                    if self.project_path.parent.name == ".sessions":
-                        db_project_path = str(self.project_path.parent.parent)
-                    else:
-                        db_project_path = str(self.project_path)
+                            # Determine project root path
+                            # If session is in .sessions/ subdirectory, use project root (parent.parent)
+                            # Otherwise, use the project_path as-is
+                            if self.project_path.parent.name == ".sessions":
+                                db_project_path = str(self.project_path.parent.parent)
+                            else:
+                                db_project_path = str(self.project_path)
 
-                    session_record = AgentInstance(
-                        instance_id=self.instance_id,
-                        session_id=self.session_id,
-                        character_id=self.context.character_id,
-                        project_id=self.context.project_id,
-                        project_path=db_project_path,
-                        role=self.role.value,
-                        status="idle",
-                        selected_specialists=self.context.specialists or [],
-                        actual_tools=self._configured_tools,
-                        actual_mcp_servers=self._configured_mcp_servers,
-                    )
-                    db.add(session_record)
+                            session_record = AgentInstance(
+                                instance_id=self.instance_id,
+                                session_id=self.session_id,
+                                character_id=self.context.character_id,
+                                project_id=self.context.project_id,
+                                project_path=db_project_path,
+                                role=self.role.value,
+                                status="idle",
+                                selected_specialists=self.context.specialists or [],
+                                actual_tools=self._configured_tools,
+                                actual_mcp_servers=self._configured_mcp_servers,
+                            )
+                            db.add(session_record)
 
-                await db.commit()
-                logger.info(f"[SESSION] Stored session in database: {self.instance_id}")
+                        await db.commit()
+                        logger.info(f"[SESSION] Stored session in database: {self.instance_id}")
 
-            except Exception as e:
-                logger.error(f"[SESSION] Failed to store session: {e}")
-                await db.rollback()
-                raise
+                    except Exception as e:
+                        logger.error(f"[SESSION] Failed to store session: {e}")
+                        await db.rollback()
+                        raise
+
+        except asyncio.TimeoutError:
+            logger.error(
+                f"[SESSION] ⏱️ TIMEOUT storing session for {self.instance_id} after 10s - "
+                f"database may be locked by another transaction"
+            )
+            raise RuntimeError(
+                f"Database timeout while storing session {self.instance_id}. "
+                f"This may indicate concurrent write contention or a stalled transaction."
+            )
 
     async def _persist_user_messages(self, messages: List[Dict[str, Any]]):
         """Persist user messages to database with sender attribution."""
-        async with AsyncSessionLocal() as db:
-            try:
-                for msg in messages:
-                    if msg.get("role") == "user":
-                        content = msg.get("content", "")
+        try:
+            # Add timeout protection to prevent indefinite hangs from database locks
+            async with asyncio.timeout(10.0):  # 10 second timeout
+                async with AsyncSessionLocal() as db:
+                    try:
+                        for msg in messages:
+                            if msg.get("role") == "user":
+                                content = msg.get("content", "")
 
-                        # Get sender attribution from message dict (passed from session_executor)
-                        # This is the new, cleaner approach that doesn't require parsing
-                        sender_role = msg.get("sender_role")
-                        sender_name = msg.get("sender_name")
-                        sender_id = msg.get("sender_id")  # Instance ID of the sender
+                                # Get sender attribution from message dict (passed from session_executor)
+                                # This is the new, cleaner approach that doesn't require parsing
+                                sender_role = msg.get("sender_role")
+                                sender_name = msg.get("sender_name")
+                                sender_id = msg.get("sender_id")  # Instance ID of the sender
 
-                        logger.info(f"[SESSION] Processing user message")
-                        logger.info(f"[SESSION]   - sender_role from dict: {sender_role}")
-                        logger.info(f"[SESSION]   - sender_name from dict: {sender_name}")
-                        logger.info(f"[SESSION]   - content preview: {content[:100]}")
+                                logger.info(f"[SESSION] Processing user message")
+                                logger.info(f"[SESSION]   - sender_role from dict: {sender_role}")
+                                logger.info(f"[SESSION]   - sender_name from dict: {sender_name}")
+                                logger.info(f"[SESSION]   - content preview: {content[:100]}")
 
-                        # Always remove sender prefix from content if present
-                        # (session_executor adds it for agent context, but we don't store it)
-                        if content.startswith("**Message from "):
-                            import re
-                            # Match: "**Message from {name} ({role}):**" or "**Message from {name}:**"
-                            match = re.match(r'\*\*Message from ([^(:\n]+?)(?:\s*\(([^)]+)\))?\s*:\*\*\s*\n(.*)', content, re.DOTALL)
-                            if match:
-                                content = match.group(3)  # Remove prefix from content
+                                # Always remove sender prefix from content if present
+                                # (session_executor adds it for agent context, but we don't store it)
+                                if content.startswith("**Message from "):
+                                    import re
+                                    # Match: "**Message from {name} ({role}):**" or "**Message from {name}:**"
+                                    match = re.match(r'\*\*Message from ([^(:\n]+?)(?:\s*\(([^)]+)\))?\s*:\*\*\s*\n(.*)', content, re.DOTALL)
+                                    if match:
+                                        content = match.group(3)  # Remove prefix from content
 
-                                # If sender metadata wasn't in dict, extract from content
+                                        # If sender metadata wasn't in dict, extract from content
+                                        if not sender_role:
+                                            sender_name = match.group(1).strip()
+                                            role_text = match.group(2)  # May be None
+
+                                            # Map role text to sender_role
+                                            if role_text:
+                                                role_lower = role_text.lower()
+                                                if "project manager" in role_lower or "pm" in role_lower:
+                                                    sender_role = "pm"
+                                                elif "orchestrator" in role_lower:
+                                                    sender_role = "orchestrator"
+                                                else:
+                                                    sender_role = "user"
+                                            else:
+                                                # No role in parentheses, check sender_name
+                                                if sender_name and sender_name.upper() in ["USER", "USER"]:
+                                                    sender_role = "user"
+                                                elif sender_name and "Manager" in sender_name:
+                                                    sender_role = "pm"
+                                                else:
+                                                    sender_role = "user"
+
+                                # If still no sender info found, default to "user"
                                 if not sender_role:
-                                    sender_name = match.group(1).strip()
-                                    role_text = match.group(2)  # May be None
+                                    sender_role = "user"
 
-                                    # Map role text to sender_role
-                                    if role_text:
-                                        role_lower = role_text.lower()
-                                        if "project manager" in role_lower or "pm" in role_lower:
-                                            sender_role = "pm"
-                                        elif "orchestrator" in role_lower:
-                                            sender_role = "orchestrator"
-                                        else:
-                                            sender_role = "user"
-                                    else:
-                                        # No role in parentheses, check sender_name
-                                        if sender_name and sender_name.upper() in ["USER", "USER"]:
-                                            sender_role = "user"
-                                        elif sender_name and "Manager" in sender_name:
-                                            sender_role = "pm"
-                                        else:
-                                            sender_role = "user"
+                                logger.info(f"[SESSION] Persisting user message: sender_role={sender_role}, sender_name={sender_name}, sender_id={sender_id}")
 
-                        # If still no sender info found, default to "user"
-                        if not sender_role:
-                            sender_role = "user"
+                                message_record = SessionMessage(
+                                    instance_id=self.instance_id,
+                                    role="user",
+                                    content=content,  # Store cleaned content without sender prefix
+                                    sender_role=sender_role,
+                                    sender_name=sender_name,
+                                    sender_id=sender_id,
+                                    timestamp=datetime.utcnow()
+                                )
+                                db.add(message_record)
 
-                        logger.info(f"[SESSION] Persisting user message: sender_role={sender_role}, sender_name={sender_name}, sender_id={sender_id}")
+                        logger.info(f"[SESSION] Committing {len(messages)} user message(s) to database...")
+                        await db.commit()
+                        logger.info(f"[SESSION] ✓ User messages committed successfully")
 
-                        message_record = SessionMessage(
-                            instance_id=self.instance_id,
-                            role="user",
-                            content=content,  # Store cleaned content without sender prefix
-                            sender_role=sender_role,
-                            sender_name=sender_name,
-                            sender_id=sender_id,
-                            timestamp=datetime.utcnow()
-                        )
-                        db.add(message_record)
+                    except Exception as e:
+                        logger.error(f"[SESSION] Failed to persist user messages: {e}")
+                        await db.rollback()
+                        raise
 
-                await db.commit()
-
-            except Exception as e:
-                logger.error(f"[SESSION] Failed to persist user messages: {e}")
-                await db.rollback()
+        except asyncio.TimeoutError:
+            logger.error(
+                f"[SESSION] ⏱️ TIMEOUT persisting user messages for {self.instance_id} after 10s - "
+                f"database may be locked by another transaction"
+            )
+            raise RuntimeError(
+                f"Database timeout while persisting messages. "
+                f"This may indicate concurrent write contention or a stalled transaction."
+            )
 
     async def _persist_response(self, content: str, tool_uses: List[Dict[str, Any]]):
         """Persist assistant response to database."""
@@ -1116,67 +1145,89 @@ class BaseSession(ABC):
 
     async def _update_status(self, status: str):
         """Update session status in database and auto-sync kanban stage."""
-        async with AsyncSessionLocal() as db:
-            try:
-                from sqlalchemy import select
-                result = await db.execute(
-                    select(AgentInstance).where(
-                        AgentInstance.instance_id == self.instance_id
-                    )
-                )
-                session_record = result.scalar_one_or_none()
+        try:
+            # Add timeout protection to prevent indefinite hangs from database locks
+            async with asyncio.timeout(5.0):  # 5 second timeout for status updates
+                async with AsyncSessionLocal() as db:
+                    try:
+                        from sqlalchemy import select
+                        result = await db.execute(
+                            select(AgentInstance).where(
+                                AgentInstance.instance_id == self.instance_id
+                            )
+                        )
+                        session_record = result.scalar_one_or_none()
 
-                if session_record:
-                    # Capture old status BEFORE updating
-                    old_status = session_record.status
-                    session_record.status = status
+                        if session_record:
+                            # Capture old status BEFORE updating
+                            old_status = session_record.status
+                            session_record.status = status
 
-                    # Auto-sync kanban stage for orchestrator/specialist (skip PM sessions)
-                    if self.role.value in ['orchestrator', 'specialist', 'single_specialist', 'character_assistant', 'skill_assistant']:
-                        new_stage = None
+                            # Auto-sync kanban stage for orchestrator/specialist (skip PM sessions)
+                            if self.role.value in ['orchestrator', 'specialist', 'single_specialist', 'character_assistant', 'skill_assistant']:
+                                new_stage = None
 
-                        # Map status to kanban stage
-                        if status in ['working', 'thinking']:
-                            new_stage = 'active'
-                        elif status in ['error', 'cancelled']:
-                            new_stage = 'waiting'
-                        elif status == 'idle':
-                            # Only move to waiting if transitioning FROM a working state
-                            # This handles completion/cancellation → waiting
-                            if old_status in ['working', 'thinking']:
-                                new_stage = 'waiting'
-                            # else: keep current stage (don't auto-move idle sessions)
+                                # Map status to kanban stage
+                                if status in ['working', 'thinking']:
+                                    new_stage = 'active'
+                                elif status in ['error', 'cancelled']:
+                                    new_stage = 'waiting'
+                                elif status == 'idle':
+                                    # Only move to waiting if transitioning FROM a working state
+                                    # This handles completion/cancellation → waiting
+                                    if old_status in ['working', 'thinking']:
+                                        new_stage = 'waiting'
+                                    # else: keep current stage (don't auto-move idle sessions)
 
-                        if new_stage:
-                            logger.info(f"[SESSION] Auto-syncing kanban stage: {session_record.kanban_stage} → {new_stage} (status: {old_status} → {status}, role: {self.role.value})")
-                            session_record.kanban_stage = new_stage
+                                if new_stage:
+                                    logger.info(f"[SESSION] Auto-syncing kanban stage: {session_record.kanban_stage} → {new_stage} (status: {old_status} → {status}, role: {self.role.value})")
+                                    session_record.kanban_stage = new_stage
 
-                    await db.commit()
+                            await db.commit()
 
-            except Exception as e:
-                logger.error(f"[SESSION] Failed to update status: {e}")
-                await db.rollback()
+                    except Exception as e:
+                        logger.error(f"[SESSION] Failed to update status: {e}")
+                        await db.rollback()
+                        raise
+
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[SESSION] ⏱️ TIMEOUT updating status for {self.instance_id} after 5s - "
+                f"database may be locked, continuing anyway"
+            )
+            # Don't raise - status updates are not critical
 
     async def _update_session_id(self, session_id: str):
         """Update Claude SDK session_id in database."""
-        async with AsyncSessionLocal() as db:
-            try:
-                from sqlalchemy import select
-                result = await db.execute(
-                    select(AgentInstance).where(
-                        AgentInstance.instance_id == self.instance_id
-                    )
-                )
-                session_record = result.scalar_one_or_none()
+        try:
+            # Add timeout protection to prevent indefinite hangs from database locks
+            async with asyncio.timeout(5.0):  # 5 second timeout
+                async with AsyncSessionLocal() as db:
+                    try:
+                        from sqlalchemy import select
+                        result = await db.execute(
+                            select(AgentInstance).where(
+                                AgentInstance.instance_id == self.instance_id
+                            )
+                        )
+                        session_record = result.scalar_one_or_none()
 
-                if session_record:
-                    session_record.session_id = session_id
-                    await db.commit()
-                    logger.info(f"[SESSION] Updated session_id in database: {session_id}")
+                        if session_record:
+                            session_record.session_id = session_id
+                            await db.commit()
+                            logger.info(f"[SESSION] Updated session_id in database: {session_id}")
 
-            except Exception as e:
-                logger.error(f"[SESSION] Failed to update session_id: {e}")
-                await db.rollback()
+                    except Exception as e:
+                        logger.error(f"[SESSION] Failed to update session_id: {e}")
+                        await db.rollback()
+                        raise
+
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[SESSION] ⏱️ TIMEOUT updating session_id for {self.instance_id} after 5s - "
+                f"database may be locked, continuing anyway"
+            )
+            # Don't raise - session_id updates are not critical for immediate execution
 
     async def _clear_session_id(self):
         """Clear stale session_id from database (used when resume fails)."""
