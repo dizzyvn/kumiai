@@ -786,15 +786,27 @@ class BaseSession(ABC):
                 transport = self.client._transport
                 # Check if transport has a process attribute (SubprocessCLITransport)
                 if hasattr(transport, '_process') and transport._process:
-                    # poll() returns None if process is still running
-                    # Returns exit code if process has terminated
-                    exit_code = transport._process.poll()
-                    if exit_code is not None:
-                        logger.warning(
-                            f"[SESSION] Client subprocess is dead for {self.instance_id} "
-                            f"(exit code: {exit_code})"
-                        )
-                        return False
+                    process = transport._process
+
+                    # Handle both asyncio.Process and subprocess.Popen
+                    if hasattr(process, 'returncode'):
+                        # asyncio.Process - check returncode attribute
+                        if process.returncode is not None:
+                            logger.warning(
+                                f"[SESSION] Client subprocess is dead for {self.instance_id} "
+                                f"(exit code: {process.returncode})"
+                            )
+                            return False
+                    elif hasattr(process, 'poll'):
+                        # subprocess.Popen - use poll() method
+                        exit_code = process.poll()
+                        if exit_code is not None:
+                            logger.warning(
+                                f"[SESSION] Client subprocess is dead for {self.instance_id} "
+                                f"(exit code: {exit_code})"
+                            )
+                            return False
+
                     logger.debug(f"[SESSION] is_client_alive: Process alive for {self.instance_id}")
                     return True
 
