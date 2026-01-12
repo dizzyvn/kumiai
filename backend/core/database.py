@@ -5,6 +5,8 @@ from sqlalchemy import text
 from .config import settings
 
 # Create async engine with SQLite-specific optimizations
+# NOTE: SQLite uses NullPool by default (no connection pooling)
+# pool_size and max_overflow are not applicable for SQLite
 engine = create_async_engine(
     settings.database_url,
     echo=False,
@@ -14,8 +16,6 @@ engine = create_async_engine(
         "check_same_thread": False,  # Allow multiple threads
     },
     pool_pre_ping=True,  # Verify connections before using
-    pool_size=20,  # Increase pool size to handle more concurrent connections
-    max_overflow=10,  # Allow up to 30 total connections (20 + 10)
 )
 
 # Create async session factory
