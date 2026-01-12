@@ -1,8 +1,13 @@
 """Database connection and session management."""
+import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import text
 from .config import settings
+
+# Connection semaphore to limit concurrent database connections
+# SQLite performs poorly with many concurrent writes, so we limit to 5 concurrent connections
+_db_semaphore = asyncio.Semaphore(5)
 
 # Create async engine with SQLite-specific optimizations
 # NOTE: SQLite uses NullPool by default (no connection pooling)
@@ -19,13 +24,44 @@ engine = create_async_engine(
 )
 
 # Create async session factory
-AsyncSessionLocal = async_sessionmaker(
+_AsyncSessionLocal = async_sessionmaker(
     engine,
     class_=AsyncSession,
     expire_on_commit=False,
     autocommit=False,
     autoflush=False,
 )
+
+
+class AsyncSessionLocal:
+    """
+    Wrapper around async_sessionmaker that uses a semaphore to limit concurrent connections.
+
+    Usage:
+        async with AsyncSessionLocal() as db:
+            # ... database operations ...
+    """
+
+    def __init__(self):
+        self._session = None
+        self._acquired = False
+
+    async def __aenter__(self):
+        # Acquire semaphore before creating session
+        await _db_semaphore.acquire()
+        self._acquired = True
+        self._session = _AsyncSessionLocal()
+        return await self._session.__aenter__()
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        try:
+            if self._session:
+                return await self._session.__aexit__(exc_type, exc_val, exc_tb)
+        finally:
+            # Always release semaphore
+            if self._acquired:
+                _db_semaphore.release()
+                self._acquired = False
 
 # Base class for models
 Base = declarative_base()
