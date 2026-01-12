@@ -28,6 +28,7 @@ from backend.core.database import AsyncSessionLocal
 from backend.models.database import AgentInstance, SessionMessage
 from backend.services.sse_manager import sse_manager
 from backend.sessions.session_context import SessionContext
+from backend.utils.database_retry import with_db_retry
 
 logger = logging.getLogger(__name__)
 
@@ -941,15 +942,24 @@ class BaseSession(ABC):
             "timestamp": datetime.utcnow().isoformat()
         })
 
+    @with_db_retry(operation_name="store session", max_retries=3, initial_delay=0.1)
     async def _store_session(self):
         """Store or update session instance in database."""
+        # CRITICAL: Do ALL path computation OUTSIDE the database transaction
+        # Determine project root path before opening database connection
+        if self.project_path.parent.name == ".sessions":
+            db_project_path = str(self.project_path.parent.parent)
+        else:
+            db_project_path = str(self.project_path)
+
+        # FAST database transaction - only SELECT + UPDATE/INSERT + COMMIT
         try:
-            # Add timeout protection to prevent indefinite hangs from database locks
-            async with asyncio.timeout(10.0):  # 10 second timeout
+            async with asyncio.timeout(5.0):  # Shorter timeout for minimal transaction
                 async with AsyncSessionLocal() as db:
                     try:
-                        # Check if session already exists
                         from sqlalchemy import select
+
+                        # Quick SELECT to check if exists
                         result = await db.execute(
                             select(AgentInstance).where(
                                 AgentInstance.instance_id == self.instance_id
@@ -965,18 +975,7 @@ class BaseSession(ABC):
                             existing.actual_tools = self._configured_tools
                             existing.actual_mcp_servers = self._configured_mcp_servers
                         else:
-                            # Create new session record
-                            # Note: character_name, character_avatar, character_color are not in DB model
-                            # They're stored in memory for display purposes only
-
-                            # Determine project root path
-                            # If session is in .sessions/ subdirectory, use project root (parent.parent)
-                            # Otherwise, use the project_path as-is
-                            if self.project_path.parent.name == ".sessions":
-                                db_project_path = str(self.project_path.parent.parent)
-                            else:
-                                db_project_path = str(self.project_path)
-
+                            # Create new session record (path already computed)
                             session_record = AgentInstance(
                                 instance_id=self.instance_id,
                                 session_id=self.session_id,
@@ -991,8 +990,9 @@ class BaseSession(ABC):
                             )
                             db.add(session_record)
 
+                        # Commit immediately
                         await db.commit()
-                        logger.info(f"[SESSION] Stored session in database: {self.instance_id}")
+                        logger.info(f"[SESSION] ✓ Stored session in database (minimal lock time)")
 
                     except Exception as e:
                         logger.error(f"[SESSION] Failed to store session: {e}")
@@ -1001,88 +1001,91 @@ class BaseSession(ABC):
 
         except asyncio.TimeoutError:
             logger.error(
-                f"[SESSION] ⏱️ TIMEOUT storing session for {self.instance_id} after 10s - "
-                f"database may be locked by another transaction"
+                f"[SESSION] ⏱️ TIMEOUT storing session for {self.instance_id} after 5s - "
+                f"database may be locked"
             )
             raise RuntimeError(
                 f"Database timeout while storing session {self.instance_id}. "
-                f"This may indicate concurrent write contention or a stalled transaction."
+                f"This may indicate concurrent write contention."
             )
 
+    @with_db_retry(operation_name="persist user messages", max_retries=3, initial_delay=0.1)
     async def _persist_user_messages(self, messages: List[Dict[str, Any]]):
         """Persist user messages to database with sender attribution."""
-        try:
-            # Add timeout protection to prevent indefinite hangs from database locks
-            async with asyncio.timeout(10.0):  # 10 second timeout
-                async with AsyncSessionLocal() as db:
-                    try:
-                        for msg in messages:
-                            if msg.get("role") == "user":
-                                content = msg.get("content", "")
+        # CRITICAL: Do ALL parsing/preparation OUTSIDE the database transaction
+        # to minimize lock time and reduce contention
 
-                                # Get sender attribution from message dict (passed from session_executor)
-                                # This is the new, cleaner approach that doesn't require parsing
-                                sender_role = msg.get("sender_role")
-                                sender_name = msg.get("sender_name")
-                                sender_id = msg.get("sender_id")  # Instance ID of the sender
+        # Step 1: Parse and prepare message records (NO DATABASE CONNECTION YET)
+        message_records = []
+        for msg in messages:
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
 
-                                logger.info(f"[SESSION] Processing user message")
-                                logger.info(f"[SESSION]   - sender_role from dict: {sender_role}")
-                                logger.info(f"[SESSION]   - sender_name from dict: {sender_name}")
-                                logger.info(f"[SESSION]   - content preview: {content[:100]}")
+                # Get sender attribution from message dict (passed from session_executor)
+                sender_role = msg.get("sender_role")
+                sender_name = msg.get("sender_name")
+                sender_id = msg.get("sender_id")
 
-                                # Always remove sender prefix from content if present
-                                # (session_executor adds it for agent context, but we don't store it)
-                                if content.startswith("**Message from "):
-                                    import re
-                                    # Match: "**Message from {name} ({role}):**" or "**Message from {name}:**"
-                                    match = re.match(r'\*\*Message from ([^(:\n]+?)(?:\s*\(([^)]+)\))?\s*:\*\*\s*\n(.*)', content, re.DOTALL)
-                                    if match:
-                                        content = match.group(3)  # Remove prefix from content
+                logger.debug(f"[SESSION] Processing user message")
+                logger.debug(f"[SESSION]   - sender_role: {sender_role}, sender_name: {sender_name}")
 
-                                        # If sender metadata wasn't in dict, extract from content
-                                        if not sender_role:
-                                            sender_name = match.group(1).strip()
-                                            role_text = match.group(2)  # May be None
+                # Always remove sender prefix from content if present
+                if content.startswith("**Message from "):
+                    import re
+                    match = re.match(r'\*\*Message from ([^(:\n]+?)(?:\s*\(([^)]+)\))?\s*:\*\*\s*\n(.*)', content, re.DOTALL)
+                    if match:
+                        content = match.group(3)
 
-                                            # Map role text to sender_role
-                                            if role_text:
-                                                role_lower = role_text.lower()
-                                                if "project manager" in role_lower or "pm" in role_lower:
-                                                    sender_role = "pm"
-                                                elif "orchestrator" in role_lower:
-                                                    sender_role = "orchestrator"
-                                                else:
-                                                    sender_role = "user"
-                                            else:
-                                                # No role in parentheses, check sender_name
-                                                if sender_name and sender_name.upper() in ["USER", "USER"]:
-                                                    sender_role = "user"
-                                                elif sender_name and "Manager" in sender_name:
-                                                    sender_role = "pm"
-                                                else:
-                                                    sender_role = "user"
+                        # Extract sender metadata from content if not in dict
+                        if not sender_role:
+                            sender_name = match.group(1).strip()
+                            role_text = match.group(2)
 
-                                # If still no sender info found, default to "user"
-                                if not sender_role:
+                            if role_text:
+                                role_lower = role_text.lower()
+                                if "project manager" in role_lower or "pm" in role_lower:
+                                    sender_role = "pm"
+                                elif "orchestrator" in role_lower:
+                                    sender_role = "orchestrator"
+                                else:
+                                    sender_role = "user"
+                            else:
+                                if sender_name and sender_name.upper() in ["USER", "USER"]:
+                                    sender_role = "user"
+                                elif sender_name and "Manager" in sender_name:
+                                    sender_role = "pm"
+                                else:
                                     sender_role = "user"
 
-                                logger.info(f"[SESSION] Persisting user message: sender_role={sender_role}, sender_name={sender_name}, sender_id={sender_id}")
+                # Default to "user" if still no sender info
+                if not sender_role:
+                    sender_role = "user"
 
-                                message_record = SessionMessage(
-                                    instance_id=self.instance_id,
-                                    role="user",
-                                    content=content,  # Store cleaned content without sender prefix
-                                    sender_role=sender_role,
-                                    sender_name=sender_name,
-                                    sender_id=sender_id,
-                                    timestamp=datetime.utcnow()
-                                )
-                                db.add(message_record)
+                # Create message record object (not yet persisted)
+                message_record = SessionMessage(
+                    instance_id=self.instance_id,
+                    role="user",
+                    content=content,
+                    sender_role=sender_role,
+                    sender_name=sender_name,
+                    sender_id=sender_id,
+                    timestamp=datetime.utcnow()
+                )
+                message_records.append(message_record)
 
-                        logger.info(f"[SESSION] Committing {len(messages)} user message(s) to database...")
+        # Step 2: FAST database transaction - only INSERT + COMMIT
+        # This minimizes lock time to the absolute minimum
+        try:
+            async with asyncio.timeout(5.0):  # Shorter timeout since transaction is now minimal
+                async with AsyncSessionLocal() as db:
+                    try:
+                        # Bulk add all prepared records
+                        db.add_all(message_records)
+
+                        # Commit immediately - transaction is very short now
                         await db.commit()
-                        logger.info(f"[SESSION] ✓ User messages committed successfully")
+
+                        logger.info(f"[SESSION] ✓ Persisted {len(message_records)} user message(s) (minimal lock time)")
 
                     except Exception as e:
                         logger.error(f"[SESSION] Failed to persist user messages: {e}")
@@ -1091,12 +1094,12 @@ class BaseSession(ABC):
 
         except asyncio.TimeoutError:
             logger.error(
-                f"[SESSION] ⏱️ TIMEOUT persisting user messages for {self.instance_id} after 10s - "
-                f"database may be locked by another transaction"
+                f"[SESSION] ⏱️ TIMEOUT persisting user messages for {self.instance_id} after 5s - "
+                f"database may be locked"
             )
             raise RuntimeError(
                 f"Database timeout while persisting messages. "
-                f"This may indicate concurrent write contention or a stalled transaction."
+                f"This may indicate concurrent write contention."
             )
 
     async def _persist_response(self, content: str, tool_uses: List[Dict[str, Any]]):
@@ -1145,12 +1148,25 @@ class BaseSession(ABC):
 
     async def _update_status(self, status: str):
         """Update session status in database and auto-sync kanban stage."""
+        # Pre-compute kanban stage logic OUTSIDE transaction
+        # This needs old_status, so we still need to SELECT, but we minimize the logic inside
+        new_stage = None
+        if self.role.value in ['orchestrator', 'specialist', 'single_specialist', 'character_assistant', 'skill_assistant']:
+            # Simple status-to-stage mapping (will be refined inside transaction based on old_status)
+            if status in ['working', 'thinking']:
+                new_stage = 'active'
+            elif status in ['error', 'cancelled']:
+                new_stage = 'waiting'
+            # idle status handled inside transaction (needs old_status check)
+
+        # FAST database transaction
         try:
-            # Add timeout protection to prevent indefinite hangs from database locks
-            async with asyncio.timeout(5.0):  # 5 second timeout for status updates
+            async with asyncio.timeout(3.0):  # Shorter timeout for this simple update
                 async with AsyncSessionLocal() as db:
                     try:
                         from sqlalchemy import select
+
+                        # Quick SELECT + UPDATE pattern
                         result = await db.execute(
                             select(AgentInstance).where(
                                 AgentInstance.instance_id == self.instance_id
@@ -1159,30 +1175,19 @@ class BaseSession(ABC):
                         session_record = result.scalar_one_or_none()
 
                         if session_record:
-                            # Capture old status BEFORE updating
                             old_status = session_record.status
                             session_record.status = status
 
-                            # Auto-sync kanban stage for orchestrator/specialist (skip PM sessions)
-                            if self.role.value in ['orchestrator', 'specialist', 'single_specialist', 'character_assistant', 'skill_assistant']:
-                                new_stage = None
-
-                                # Map status to kanban stage
-                                if status in ['working', 'thinking']:
-                                    new_stage = 'active'
-                                elif status in ['error', 'cancelled']:
+                            # Refine kanban stage for idle status transition
+                            if status == 'idle' and self.role.value in ['orchestrator', 'specialist', 'single_specialist', 'character_assistant', 'skill_assistant']:
+                                if old_status in ['working', 'thinking']:
                                     new_stage = 'waiting'
-                                elif status == 'idle':
-                                    # Only move to waiting if transitioning FROM a working state
-                                    # This handles completion/cancellation → waiting
-                                    if old_status in ['working', 'thinking']:
-                                        new_stage = 'waiting'
-                                    # else: keep current stage (don't auto-move idle sessions)
+                                # else: keep new_stage as None (no change)
 
-                                if new_stage:
-                                    logger.info(f"[SESSION] Auto-syncing kanban stage: {session_record.kanban_stage} → {new_stage} (status: {old_status} → {status}, role: {self.role.value})")
-                                    session_record.kanban_stage = new_stage
+                            if new_stage:
+                                session_record.kanban_stage = new_stage
 
+                            # Commit immediately
                             await db.commit()
 
                     except Exception as e:
@@ -1192,30 +1197,30 @@ class BaseSession(ABC):
 
         except asyncio.TimeoutError:
             logger.warning(
-                f"[SESSION] ⏱️ TIMEOUT updating status for {self.instance_id} after 5s - "
+                f"[SESSION] ⏱️ TIMEOUT updating status for {self.instance_id} after 3s - "
                 f"database may be locked, continuing anyway"
             )
             # Don't raise - status updates are not critical
 
     async def _update_session_id(self, session_id: str):
         """Update Claude SDK session_id in database."""
+        # OPTIMIZED: Use direct UPDATE statement instead of SELECT + UPDATE
+        # This is faster and holds the lock for less time
         try:
-            # Add timeout protection to prevent indefinite hangs from database locks
-            async with asyncio.timeout(5.0):  # 5 second timeout
+            async with asyncio.timeout(3.0):  # Shorter timeout for simple update
                 async with AsyncSessionLocal() as db:
                     try:
-                        from sqlalchemy import select
-                        result = await db.execute(
-                            select(AgentInstance).where(
-                                AgentInstance.instance_id == self.instance_id
-                            )
-                        )
-                        session_record = result.scalar_one_or_none()
+                        from sqlalchemy import update
 
-                        if session_record:
-                            session_record.session_id = session_id
-                            await db.commit()
-                            logger.info(f"[SESSION] Updated session_id in database: {session_id}")
+                        # Direct UPDATE - no SELECT needed
+                        await db.execute(
+                            update(AgentInstance)
+                            .where(AgentInstance.instance_id == self.instance_id)
+                            .values(session_id=session_id)
+                        )
+                        await db.commit()
+
+                        logger.info(f"[SESSION] ✓ Updated session_id (direct UPDATE)")
 
                     except Exception as e:
                         logger.error(f"[SESSION] Failed to update session_id: {e}")
@@ -1224,7 +1229,7 @@ class BaseSession(ABC):
 
         except asyncio.TimeoutError:
             logger.warning(
-                f"[SESSION] ⏱️ TIMEOUT updating session_id for {self.instance_id} after 5s - "
+                f"[SESSION] ⏱️ TIMEOUT updating session_id for {self.instance_id} after 3s - "
                 f"database may be locked, continuing anyway"
             )
             # Don't raise - session_id updates are not critical for immediate execution
