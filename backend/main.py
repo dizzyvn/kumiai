@@ -8,6 +8,20 @@ from pathlib import Path
 import logging
 import asyncio
 
+# Python version check - require 3.11+ for asyncio.timeout()
+if sys.version_info < (3, 11):
+    print("❌ Error: Python 3.11 or higher is required")
+    print(f"   Current version: Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+    print("\n   Please upgrade Python:")
+    print("   - macOS: brew install python@3.11")
+    print("   - Linux: sudo apt install python3.11")
+    print("\n   Then recreate your virtual environment:")
+    print("   - rm -rf venv")
+    print("   - python3.11 -m venv venv")
+    print("   - source venv/bin/activate")
+    print("   - pip install -r requirements.txt")
+    sys.exit(1)
+
 # Ensure parent directory is in path for package imports
 parent_dir = str(Path(__file__).parent.parent)
 if parent_dir not in sys.path:

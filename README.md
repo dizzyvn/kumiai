@@ -24,7 +24,7 @@ Project-level multi-agent system powered by Claude. Build AI teams that collabor
 
 ### Prerequisites
 
-- Python 3.10+
+- **Python 3.11+** (required for asyncio.timeout)
 - Node.js 18+
 - Claude API key (logged in via Claude Code)
 
@@ -33,8 +33,14 @@ Project-level multi-agent system powered by Claude. Build AI teams that collabor
 ```bash
 # 1. Backend
 cd backend
-python3 -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# Create virtual environment with Python 3.11+
+python3.11 -m venv venv  # macOS/Linux
+# Or: py -3.11 -m venv venv  # Windows
+
+source venv/bin/activate  # macOS/Linux
+# Or: venv\Scripts\activate  # Windows
+
 pip install -r requirements.txt
 
 # Start server (database auto-initializes at ~/.kumiai/kumiAI.db)
