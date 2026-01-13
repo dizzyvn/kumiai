@@ -216,7 +216,7 @@ class SpecialistSession(BaseSession):
             "hooks": {
                 "PreToolUse": [
                     HookMatcher(matcher=".*show_file.*", hooks=[normalize_file_path_hook]),
-                    HookMatcher(matcher=".*remind.*|.*contact_pm.*", hooks=[inject_session_id_hook])
+                    HookMatcher(matcher=".*remind.*|.*contact_pm.*|.*contact_session.*", hooks=[inject_session_id_hook])
                 ]
             }
         }

@@ -136,7 +136,7 @@ Focus on creating modular, reusable skill definitions that can be easily integra
             "permission_mode": "bypassPermissions",  # Skip all permission prompts
             "hooks": {
                 "PreToolUse": [
-                    HookMatcher(matcher="remind|contact_pm", hooks=[inject_session_id_hook])
+                    HookMatcher(matcher="remind|contact_pm|contact_session", hooks=[inject_session_id_hook])
                 ]
             }
         }

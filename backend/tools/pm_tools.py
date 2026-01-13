@@ -1552,6 +1552,181 @@ async def show_file(args: dict[str, Any]) -> dict[str, Any]:
         }
 
 
+# ============================================================================
+# Tools for Normal Sessions - Contact Other Sessions
+# ============================================================================
+
+async def _contact_session_specialist_background(
+    session_id: str,
+    instance_id: str,
+    message: str
+) -> None:
+    """
+    Background task for specialist-to-specialist contact with error notifications.
+
+    Handles validation and message delivery asynchronously, notifying
+    the sender via SSE if any step fails.
+
+    Args:
+        session_id: Sender's Claude SDK session ID
+        instance_id: Target instance ID
+        message: Message to send
+    """
+    import asyncio
+    from ..services.claude_client import client_manager
+
+    sender_instance_id = None
+    try:
+        # Get sender instance ID for error notifications
+        sender_instance_id = client_manager.get_instance_id_from_session(session_id)
+
+        # Validate sender and target exist and belong to same project
+        async with AsyncSessionLocal() as db:
+            result = await asyncio.wait_for(
+                db.execute(
+                    select(DBAgentInstance).where(
+                        DBAgentInstance.instance_id.in_([sender_instance_id, instance_id])
+                    )
+                ),
+                timeout=10.0
+            )
+            instances = {inst.instance_id: inst for inst in result.scalars().all()}
+
+            sender = instances.get(sender_instance_id)
+            target = instances.get(instance_id)
+
+            if not sender:
+                raise RuntimeError(f"Sender instance {sender_instance_id} not found")
+
+            if not target:
+                raise RuntimeError(f"Target instance {instance_id} not found")
+
+            # Validate same project (if both have project_id)
+            if sender.project_id and target.project_id and sender.project_id != target.project_id:
+                raise RuntimeError(
+                    f"Cannot contact instance from different project "
+                    f"(your project: {sender.project_id}, target project: {target.project_id})"
+                )
+
+        logger.info(
+            f"[SESSION_CONTACT] ✅ Validated {sender_instance_id[:8]} -> {instance_id[:8]}"
+        )
+
+        # Send message (this is already fire-and-forget internally)
+        await _send_cross_session_message(
+            sender_session_id=session_id,
+            recipient_instance_id=instance_id,
+            message=message
+        )
+
+        logger.info(
+            f"[SESSION_CONTACT] ✅ Session contact completed: {sender_instance_id[:8]} -> {instance_id[:8]}"
+        )
+
+    except asyncio.TimeoutError:
+        logger.error(
+            f"[SESSION_CONTACT] ⏱️ Timeout validating session routing (database query hung)"
+        )
+        if sender_instance_id:
+            await sse_manager.broadcast(sender_instance_id, {
+                "type": "session_contact_failed",
+                "target_instance_id": instance_id,
+                "error": "Database query timed out - system may be overloaded",
+                "timestamp": "now"
+            })
+
+    except Exception as e:
+        logger.error(
+            f"[SESSION_CONTACT] ❌ Failed to contact session {instance_id}: {e}",
+            exc_info=True
+        )
+        if sender_instance_id:
+            await sse_manager.broadcast(sender_instance_id, {
+                "type": "session_contact_failed",
+                "target_instance_id": instance_id,
+                "error": str(e),
+                "timestamp": "now"
+            })
+
+
+@tool(
+    "contact_session",
+    "Send a message to another agent session within the same project",
+    {"instance_id": str, "message": str}
+)
+async def contact_session_specialist(args: dict[str, Any]) -> dict[str, Any]:
+    """Send message to another session in the same project.
+
+    Works with instances in ANY status (active, idle, or completed).
+    Use for: collaboration, sharing context, requesting help, or coordinating work.
+
+    Args:
+        instance_id: ID of the target instance
+        message: Message to send (will appear as user input to the instance)
+        session_id: Claude SDK session ID (auto-injected by hook)
+
+    Returns:
+        Delivery confirmation
+    """
+    try:
+        session_id = args.get("session_id", "")
+        instance_id = args.get("instance_id", "")
+        message = args.get("message", "")
+
+        # Validate inputs
+        if not session_id:
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": "✗ Error: session_id is required (should be auto-injected)"
+                }]
+            }
+
+        if not instance_id:
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": "✗ Error: instance_id is required"
+                }]
+            }
+
+        if not message:
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": "✗ Error: message is required"
+                }]
+            }
+
+        logger.info(f"[SESSION_CONTACT] Sending message to instance {instance_id}: {message[:100]}...")
+
+        # 🔥 FIRE-AND-FORGET: Dispatch session contact to background task
+        from ..core.task_manager import get_task_manager
+        task_manager = get_task_manager()
+        task_manager.create_task(
+            _contact_session_specialist_background(session_id, instance_id, message),
+            name=f"contact_session_{instance_id[:8]}"
+        )
+
+        logger.info(f"[SESSION_CONTACT] 🚀 Session contact dispatched to background for {instance_id[:8]}")
+
+        return {
+            "content": [{
+                "type": "text",
+                "text": f"✓ Message to instance {instance_id[:8]} dispatched\n\nYour message is being delivered."
+            }]
+        }
+
+    except Exception as e:
+        logger.error(f"[SESSION_CONTACT] Error dispatching message to session: {e}", exc_info=True)
+        return {
+            "content": [{
+                "type": "text",
+                "text": f"✗ Failed to dispatch message: {str(e)}"
+            }]
+        }
+
+
 @tool(
     "notify_user",
     (
