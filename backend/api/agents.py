@@ -410,6 +410,42 @@ async def get_queue_status(instance_id: str):
     }
 
 
+@router.get("/{instance_id}/status")
+async def get_session_status(instance_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Get current session status from in-memory cache or database.
+
+    Returns:
+        {"status": "idle"|"working"|"error"|"cancelled", "instance_id": str}
+    """
+    from ..sessions import get_session_registry
+
+    # Try to get status from active session first (in-memory)
+    registry = get_session_registry()
+    session = registry.get_session(instance_id)
+
+    if session and hasattr(session, '_current_status'):
+        # Return in-memory status (most up-to-date)
+        return {
+            "status": session._current_status,
+            "instance_id": instance_id,
+            "source": "memory"
+        }
+
+    # Fall back to database
+    service = AgentService(db)
+    agent = await service.get_agent(instance_id)
+
+    if not agent:
+        raise SessionNotFoundError(instance_id)
+
+    return {
+        "status": agent.status,
+        "instance_id": instance_id,
+        "source": "database"
+    }
+
+
 @router.post("/{instance_id}/cancel", status_code=204)
 async def cancel_session(instance_id: str, db: AsyncSession = Depends(get_db)):
     """Cancel a running session by sending an interrupt signal."""

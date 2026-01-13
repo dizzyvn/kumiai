@@ -33,6 +33,7 @@ from backend.core.database import init_db
 from backend.core.task_manager import get_task_manager
 from backend.sessions.session_registry import get_session_registry
 from backend.core.cleanup import schedule_daily_cleanup
+from backend.core.background_tasks import start_background_tasks, stop_background_tasks
 from backend.api import characters, skills, agents, projects, mcp, session_files, health, robot, user_profile
 
 
@@ -45,6 +46,10 @@ async def lifespan(app: FastAPI):
 
     await init_db()
     print("✓ Database initialized")
+
+    # Start background task queue for non-blocking operations
+    await start_background_tasks()
+    print("✓ Background task queue started")
 
     # Reset stuck sessions from previous crash
     from backend.core.database import AsyncSessionLocal
@@ -83,6 +88,9 @@ async def lifespan(app: FastAPI):
     # Cancel all background tasks
     task_manager = get_task_manager()
     await task_manager.cancel_all()
+
+    # Stop background task queue
+    await stop_background_tasks()
 
     print("✓ Cleanup complete")
 

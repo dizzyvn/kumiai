@@ -25,6 +25,7 @@ from claude_agent_sdk import (
 from backend.config.session_roles import SessionRole
 from backend.core.constants import CONNECTION_TIMEOUT_SECONDS
 from backend.core.database import AsyncSessionLocal
+from backend.core.background_tasks import get_background_tasks
 from backend.models.database import AgentInstance, SessionMessage
 from backend.services.sse_manager import sse_manager
 from backend.sessions.session_context import SessionContext
@@ -464,66 +465,65 @@ class BaseSession(ABC):
                                 logger.info(f"[TRANSITION] Clearing {len(batched_deltas)} buffered deltas (will be saved to DB)")
                                 batched_deltas.clear()
 
+                            # Fire-and-forget message persistence (non-blocking)
+                            # Captures current values to avoid race conditions
                             from ..services.message_service import MessageService
 
-                            # Wrap finalization in timeout to prevent stream freeze
-                            # If DB is locked, we skip finalization and continue streaming
-                            try:
-                                async with asyncio.timeout(3.0):
-                                    async with AsyncSessionLocal() as db:
-                                        message_service = MessageService(db)
+                            # Capture current values for async task
+                            captured_content_type = current_content_type
+                            captured_sequence = sequence_counter
 
-                                        if current_content_type == "text" and response_text:
-                                            # Finalize accumulated text block
-                                            logger.info(f"[TRANSITION] Finalizing text block ({len(response_text)} chars, sequence={sequence_counter})")
-                                            await message_service.finalize_text_block(
-                                                instance_id=self.instance_id,
-                                                content=response_text,
-                                                sequence=sequence_counter,
-                                                sender_role=sender_role,
-                                                sender_id=sender_id,
-                                                sender_name=sender_name,
-                                                sender_instance=sender_instance,
-                                                response_id=response_id,
-                                            )
-                                            sequence_counter += 1  # Increment for next block
-                                            response_text = ""  # Reset for next text block
+                            if captured_content_type == "text" and response_text:
+                                # Capture text for background save
+                                captured_text = response_text
+                                logger.info(f"[TRANSITION] Scheduling text block save ({len(captured_text)} chars, sequence={captured_sequence})")
 
-                                        elif current_content_type == "tool_use" and current_tool_use:
-                                            # Finalize previous tool using helper method
-                                            logger.info(f"[TRANSITION] Finalizing tool: {current_tool_use['name']} (sequence={current_tool_use['sequence']})")
-                                            await self._finalize_tool_block(current_tool_use, message_service, response_id)
-                                            sequence_counter += 1  # Increment for next block
-                                            current_tool_use = None
-                                            current_tool_input_json = ""
+                                async def save_text_block():
+                                    try:
+                                        async with asyncio.timeout(10.0):  # Longer timeout, not blocking stream
+                                            async with AsyncSessionLocal() as db:
+                                                message_service = MessageService(db)
+                                                await message_service.finalize_text_block(
+                                                    instance_id=self.instance_id,
+                                                    content=captured_text,
+                                                    sequence=captured_sequence,
+                                                    sender_role=sender_role,
+                                                    sender_id=sender_id,
+                                                    sender_name=sender_name,
+                                                    sender_instance=sender_instance,
+                                                    response_id=response_id,
+                                                )
+                                                logger.info(f"[TRANSITION] ✓ Text block saved (sequence={captured_sequence})")
+                                    except Exception as e:
+                                        logger.error(f"[TRANSITION] Background text save failed: {e}")
 
-                            except asyncio.TimeoutError:
-                                # Database locked - skip finalization and continue streaming
-                                # This prevents the entire stream from freezing
-                                logger.warning(
-                                    f"[TRANSITION] ⏱️ Timeout finalizing message (database locked) - "
-                                    f"skipping finalization and continuing stream. "
-                                    f"Content type: {current_content_type}, sequence: {sequence_counter}"
-                                )
-                                # Don't increment sequence_counter - this block was not saved
-                                # Reset accumulation state
-                                if current_content_type == "text":
-                                    response_text = ""
-                                elif current_content_type == "tool_use":
-                                    current_tool_use = None
-                                    current_tool_input_json = ""
-                            except Exception as e:
-                                # Other finalization error - log but continue streaming
-                                logger.error(
-                                    f"[TRANSITION] Error finalizing message: {e} - "
-                                    f"skipping finalization and continuing stream"
-                                )
-                                # Reset accumulation state
-                                if current_content_type == "text":
-                                    response_text = ""
-                                elif current_content_type == "tool_use":
-                                    current_tool_use = None
-                                    current_tool_input_json = ""
+                                # Enqueue for background processing
+                                get_background_tasks().enqueue(save_text_block)
+
+                                sequence_counter += 1  # Increment immediately
+                                response_text = ""  # Reset for next text block
+
+                            elif captured_content_type == "tool_use" and current_tool_use:
+                                # Capture tool data for background save
+                                captured_tool = current_tool_use.copy()
+                                logger.info(f"[TRANSITION] Scheduling tool save: {captured_tool['name']} (sequence={captured_sequence})")
+
+                                async def save_tool_block():
+                                    try:
+                                        async with asyncio.timeout(10.0):  # Longer timeout, not blocking stream
+                                            async with AsyncSessionLocal() as db:
+                                                message_service = MessageService(db)
+                                                await self._finalize_tool_block(captured_tool, message_service, response_id)
+                                                logger.info(f"[TRANSITION] ✓ Tool saved: {captured_tool['name']}")
+                                    except Exception as e:
+                                        logger.error(f"[TRANSITION] Background tool save failed: {e}")
+
+                                # Enqueue for background processing
+                                get_background_tasks().enqueue(save_tool_block)
+
+                                sequence_counter += 1  # Increment immediately
+                                current_tool_use = None
+                                current_tool_input_json = ""
 
                         # Update current content type
                         current_content_type = new_content_type
@@ -592,45 +592,54 @@ class BaseSession(ABC):
                         # Yield control events immediately (tool_use, etc.)
                         # NOTE: Don't broadcast here - session_executor will broadcast
                         yield event
-            # Stream loop completed - finalize any remaining blocks
-            logger.info(f"[SESSION] Stream loop completed, finalizing remaining blocks")
+            # Stream loop completed - schedule final cleanup in background (non-blocking)
+            logger.info(f"[SESSION] Stream loop completed, scheduling final cleanup")
 
-            # Wrap final finalization in timeout to prevent hanging on completion
-            try:
-                async with asyncio.timeout(5.0):  # Longer timeout for final finalization
-                    from ..services.message_service import MessageService
-                    async with AsyncSessionLocal() as db:
-                        message_service = MessageService(db)
+            # Fire-and-forget final cleanup
+            from ..services.message_service import MessageService
 
-                        # Finalize remaining text block (if any)
-                        if current_content_type == "text" and response_text:
-                            logger.info(f"[SESSION] Finalizing final text block ({len(response_text)} chars, sequence={sequence_counter})")
-                            await message_service.finalize_text_block(
-                                instance_id=self.instance_id,
-                                content=response_text,
-                                sequence=sequence_counter,
-                                sender_role=sender_role,
-                                sender_id=sender_id,
-                                sender_name=sender_name,
-                                sender_instance=sender_instance,
-                                response_id=response_id,
-                            )
+            # Capture final state for background save
+            if current_content_type == "text" and response_text:
+                final_text = response_text
+                final_sequence = sequence_counter
+                logger.info(f"[SESSION] Scheduling final text block save ({len(final_text)} chars)")
 
-                        # Finalize remaining tool (if any) - use separate if for defensive coding
-                        if current_content_type == "tool_use" and current_tool_use:
-                            logger.info(f"[SESSION] Finalizing final tool: {current_tool_use['name']}")
-                            await self._finalize_tool_block(current_tool_use, message_service, response_id)
+                async def save_final_text():
+                    try:
+                        async with asyncio.timeout(15.0):  # Long timeout for final save
+                            async with AsyncSessionLocal() as db:
+                                message_service = MessageService(db)
+                                await message_service.finalize_text_block(
+                                    instance_id=self.instance_id,
+                                    content=final_text,
+                                    sequence=final_sequence,
+                                    sender_role=sender_role,
+                                    sender_id=sender_id,
+                                    sender_name=sender_name,
+                                    sender_instance=sender_instance,
+                                    response_id=response_id,
+                                )
+                                logger.info(f"[SESSION] ✓ Final text block saved")
+                    except Exception as e:
+                        logger.error(f"[SESSION] Background final text save failed: {e}")
 
-            except asyncio.TimeoutError:
-                # Database locked during final finalization
-                logger.error(
-                    f"[SESSION] ⏱️ Timeout finalizing remaining blocks (database locked) - "
-                    f"partial data may be lost. Content type: {current_content_type}"
-                )
-                # Continue to send completion events even if finalization failed
-            except Exception as e:
-                logger.error(f"[SESSION] Error finalizing remaining blocks: {e}")
-                # Continue to send completion events even if finalization failed
+                get_background_tasks().enqueue(save_final_text)
+
+            elif current_content_type == "tool_use" and current_tool_use:
+                final_tool = current_tool_use.copy()
+                logger.info(f"[SESSION] Scheduling final tool save: {final_tool['name']}")
+
+                async def save_final_tool():
+                    try:
+                        async with asyncio.timeout(15.0):  # Long timeout for final save
+                            async with AsyncSessionLocal() as db:
+                                message_service = MessageService(db)
+                                await self._finalize_tool_block(final_tool, message_service, response_id)
+                                logger.info(f"[SESSION] ✓ Final tool saved: {final_tool['name']}")
+                    except Exception as e:
+                        logger.error(f"[SESSION] Background final tool save failed: {e}")
+
+                get_background_tasks().enqueue(save_final_tool)
 
             # Send message_complete event
             logger.info(f"[SESSION] Sending message_complete event")
@@ -664,41 +673,57 @@ class BaseSession(ABC):
             if 'batched_deltas' in locals():
                 batched_deltas.clear()
 
-            # Preserve partial blocks with interruption notice
-            try:
-                # Wrap in timeout to prevent hanging during cancellation cleanup
-                async with asyncio.timeout(3.0):
-                    from ..services.message_service import MessageService
-                    async with AsyncSessionLocal() as db:
-                        message_service = MessageService(db)
+            # Preserve partial blocks with interruption notice (fire-and-forget)
+            from ..services.message_service import MessageService
 
-                        # Finalize partial text block with interruption notice
-                        if 'current_content_type' in locals() and current_content_type == "text" and 'response_text' in locals() and response_text:
-                            interrupted_text = response_text + "\n\n*[Response interrupted by user]*"
-                            await message_service.finalize_text_block(
-                                instance_id=self.instance_id,
-                                content=interrupted_text,
-                                sequence=sequence_counter if 'sequence_counter' in locals() else 0,
-                                sender_role=sender_role if 'sender_role' in locals() else None,
-                                sender_id=sender_id if 'sender_id' in locals() else None,
-                                sender_name=sender_name if 'sender_name' in locals() else None,
-                                sender_instance=sender_instance if 'sender_instance' in locals() else None,
-                                response_id=response_id if 'response_id' in locals() else None,
-                            )
-                            logger.info(f"[SESSION] Preserved partial text block with interruption notice ({len(response_text)} chars)")
+            # Schedule interrupted text save in background
+            if 'current_content_type' in locals() and current_content_type == "text" and 'response_text' in locals() and response_text:
+                interrupted_text = response_text + "\n\n*[Response interrupted by user]*"
+                interrupted_sequence = sequence_counter if 'sequence_counter' in locals() else 0
+                logger.info(f"[SESSION] Scheduling interrupted text save ({len(response_text)} chars)")
 
-                        # Finalize partial tool (if any) - use separate if for defensive coding
-                        if 'current_content_type' in locals() and current_content_type == "tool_use" and 'current_tool_use' in locals() and current_tool_use:
-                            logger.info(f"[SESSION] Preserving partial tool with interruption notice: {current_tool_use['name']}")
-                            await self._finalize_tool_block(
-                                current_tool_use,
-                            message_service,
-                            response_id if 'response_id' in locals() else None,
-                            interrupted=True
-                        )
+                async def save_interrupted_text():
+                    try:
+                        async with asyncio.timeout(10.0):
+                            async with AsyncSessionLocal() as db:
+                                message_service = MessageService(db)
+                                await message_service.finalize_text_block(
+                                    instance_id=self.instance_id,
+                                    content=interrupted_text,
+                                    sequence=interrupted_sequence,
+                                    sender_role=sender_role if 'sender_role' in locals() else None,
+                                    sender_id=sender_id if 'sender_id' in locals() else None,
+                                    sender_name=sender_name if 'sender_name' in locals() else None,
+                                    sender_instance=sender_instance if 'sender_instance' in locals() else None,
+                                    response_id=response_id if 'response_id' in locals() else None,
+                                )
+                                logger.info(f"[SESSION] ✓ Interrupted text saved")
+                    except Exception as e:
+                        logger.error(f"[SESSION] Background interrupted text save failed: {e}")
 
-            except Exception as preserve_error:
-                logger.error(f"[SESSION] Failed to preserve partial blocks: {preserve_error}")
+                get_background_tasks().enqueue(save_interrupted_text)
+
+            # Schedule interrupted tool save in background
+            elif 'current_content_type' in locals() and current_content_type == "tool_use" and 'current_tool_use' in locals() and current_tool_use:
+                interrupted_tool = current_tool_use.copy()
+                logger.info(f"[SESSION] Scheduling interrupted tool save: {interrupted_tool['name']}")
+
+                async def save_interrupted_tool():
+                    try:
+                        async with asyncio.timeout(10.0):
+                            async with AsyncSessionLocal() as db:
+                                message_service = MessageService(db)
+                                await self._finalize_tool_block(
+                                    interrupted_tool,
+                                    message_service,
+                                    response_id if 'response_id' in locals() else None,
+                                    interrupted=True
+                                )
+                                logger.info(f"[SESSION] ✓ Interrupted tool saved: {interrupted_tool['name']}")
+                    except Exception as e:
+                        logger.error(f"[SESSION] Background interrupted tool save failed: {e}")
+
+                get_background_tasks().enqueue(save_interrupted_tool)
 
             # Yield cancelled event (will be rebroadcast by execute_query_unified)
             # Frontend will convert streaming message to permanent message (already saved in DB)
@@ -1109,9 +1134,10 @@ class BaseSession(ABC):
                 sender_role = msg.get("sender_role")
                 sender_name = msg.get("sender_name")
                 sender_id = msg.get("sender_id")
+                sender_instance = msg.get("sender_instance")
 
                 logger.debug(f"[SESSION] Processing user message")
-                logger.debug(f"[SESSION]   - sender_role: {sender_role}, sender_name: {sender_name}")
+                logger.debug(f"[SESSION]   - sender_role: {sender_role}, sender_name: {sender_name}, sender_instance: {sender_instance}")
 
                 # Always remove sender prefix from content if present
                 if content.startswith("**Message from "):
@@ -1153,6 +1179,7 @@ class BaseSession(ABC):
                     sender_role=sender_role,
                     sender_name=sender_name,
                     sender_id=sender_id,
+                    sender_instance=sender_instance,
                     timestamp=datetime.utcnow()
                 )
                 message_records.append(message_record)
@@ -1160,7 +1187,7 @@ class BaseSession(ABC):
         # Step 2: FAST database transaction - only INSERT + COMMIT
         # This minimizes lock time to the absolute minimum
         try:
-            async with asyncio.timeout(5.0):  # Shorter timeout since transaction is now minimal
+            async with asyncio.timeout(10.0):  # Increased timeout for better reliability
                 async with AsyncSessionLocal() as db:
                     try:
                         # Bulk add all prepared records
@@ -1177,14 +1204,12 @@ class BaseSession(ABC):
                         raise
 
         except asyncio.TimeoutError:
+            # Log error but don't crash - messages are in memory for processing
             logger.error(
-                f"[SESSION] ⏱️ TIMEOUT persisting user messages for {self.instance_id} after 5s - "
-                f"database may be locked"
+                f"[SESSION] ⏱️ TIMEOUT persisting user messages for {self.instance_id} after 10s - "
+                f"continuing with in-memory messages. DB may be congested."
             )
-            raise RuntimeError(
-                f"Database timeout while persisting messages. "
-                f"This may indicate concurrent write contention."
-            )
+            # Don't raise - execution continues with in-memory messages
 
     async def _persist_response(self, content: str, tool_uses: List[Dict[str, Any]]):
         """Persist assistant response to database."""
@@ -1232,120 +1257,100 @@ class BaseSession(ABC):
 
     async def _update_status(self, status: str, is_critical: bool = True):
         """
-        Update session status in database with retry logic and auto-sync kanban stage.
+        Update session status with guaranteed SSE broadcast.
+
+        Strategy:
+        1. Update in-memory state (always succeeds)
+        2. Try to persist to DB (with retries)
+        3. ALWAYS broadcast via SSE (even if DB fails)
+        4. Never crash session (log errors only)
 
         Args:
             status: New status to set
-            is_critical: If True, raises exception on failure. If False, logs warning only.
-                        Status updates should be critical by default to prevent ghost sessions.
+            is_critical: Deprecated, kept for API compatibility. Status updates never crash.
         """
-        # Pre-compute kanban stage logic OUTSIDE transaction
-        # This needs old_status, so we still need to SELECT, but we minimize the logic inside
+        # Step 1: Update in-memory state first (always succeeds)
+        old_status = getattr(self, '_current_status', 'idle')
+        self._current_status = status
+        logger.debug(f"[SESSION] In-memory status: {old_status} → {status}")
+
+        # Pre-compute kanban stage logic
         new_stage = None
         if self.role.value in ['orchestrator', 'specialist', 'single_specialist', 'character_assistant', 'skill_assistant']:
-            # Simple status-to-stage mapping (will be refined inside transaction based on old_status)
             if status in ['working', 'thinking']:
                 new_stage = 'active'
             elif status in ['error', 'cancelled']:
                 new_stage = 'waiting'
-            # idle status handled inside transaction (needs old_status check)
+            elif status == 'idle' and old_status in ['working', 'thinking']:
+                new_stage = 'waiting'
 
-        # Retry logic with exponential backoff
+        # Step 2: Try to persist to DB (with retries)
+        db_success = False
         max_retries = 3
-        base_timeout = 3.0
+        base_timeout = 5.0  # Increased from 3.0
 
         for attempt in range(max_retries):
             try:
-                # Increase timeout on retries
                 timeout_duration = base_timeout * (1.5 ** attempt)
 
                 async with asyncio.timeout(timeout_duration):
                     async with AsyncSessionLocal() as db:
-                        try:
-                            from sqlalchemy import select
+                        from sqlalchemy import select
 
-                            # Quick SELECT + UPDATE pattern
-                            result = await db.execute(
-                                select(AgentInstance).where(
-                                    AgentInstance.instance_id == self.instance_id
-                                )
+                        result = await db.execute(
+                            select(AgentInstance).where(
+                                AgentInstance.instance_id == self.instance_id
                             )
-                            session_record = result.scalar_one_or_none()
+                        )
+                        session_record = result.scalar_one_or_none()
 
-                            if session_record:
-                                old_status = session_record.status
-                                session_record.status = status
+                        if session_record:
+                            session_record.status = status
+                            if new_stage:
+                                session_record.kanban_stage = new_stage
+                            await db.commit()
+                            db_success = True
 
-                                # Refine kanban stage for idle status transition
-                                if status == 'idle' and self.role.value in ['orchestrator', 'specialist', 'single_specialist', 'character_assistant', 'skill_assistant']:
-                                    if old_status in ['working', 'thinking']:
-                                        new_stage = 'waiting'
-                                    # else: keep new_stage as None (no change)
-
-                                if new_stage:
-                                    session_record.kanban_stage = new_stage
-
-                                # Commit immediately
-                                await db.commit()
-
-                                # Success - log if this was a retry
-                                if attempt > 0:
-                                    logger.info(
-                                        f"[SESSION] ✓ Status update succeeded on attempt {attempt + 1}/{max_retries}"
-                                    )
-                                return  # Success!
-
-                        except Exception as e:
-                            logger.error(f"[SESSION] Failed to update status (attempt {attempt + 1}/{max_retries}): {e}")
-                            await db.rollback()
-                            raise
+                            if attempt > 0:
+                                logger.info(f"[SESSION] ✓ Status persisted on attempt {attempt + 1}")
+                            break  # Success!
 
             except asyncio.TimeoutError:
+                logger.warning(
+                    f"[SESSION] ⏱️ Status update timeout (attempt {attempt + 1}/{max_retries}, "
+                    f"{timeout_duration:.1f}s) - {'retrying' if attempt < max_retries - 1 else 'giving up'}"
+                )
                 if attempt < max_retries - 1:
-                    # Not the last attempt - log and retry
-                    logger.warning(
-                        f"[SESSION] ⏱️ TIMEOUT updating status (attempt {attempt + 1}/{max_retries}) "
-                        f"after {timeout_duration:.1f}s - retrying..."
-                    )
-                    await asyncio.sleep(0.1 * (2 ** attempt))  # Brief exponential backoff
-                    continue
-                else:
-                    # Last attempt failed
-                    error_msg = (
-                        f"[SESSION] ⏱️ CRITICAL: Failed to update status to '{status}' for {self.instance_id} "
-                        f"after {max_retries} attempts. Database may be locked or unavailable."
-                    )
-
-                    if is_critical:
-                        logger.error(error_msg)
-                        raise RuntimeError(
-                            f"Critical status update failed: could not set status to '{status}' "
-                            f"after {max_retries} attempts. Session state may be inconsistent."
-                        )
-                    else:
-                        logger.warning(error_msg + " (non-critical, continuing)")
-                        return
-
-            except Exception as e:
-                # Non-timeout exception
-                if attempt < max_retries - 1:
-                    logger.warning(
-                        f"[SESSION] Error updating status (attempt {attempt + 1}/{max_retries}): {e} - retrying..."
-                    )
                     await asyncio.sleep(0.1 * (2 ** attempt))
-                    continue
-                else:
-                    # Last attempt failed with exception
-                    if is_critical:
-                        logger.error(
-                            f"[SESSION] CRITICAL: Status update failed after {max_retries} attempts: {e}"
-                        )
-                        raise
-                    else:
-                        logger.warning(
-                            f"[SESSION] Status update failed after {max_retries} attempts: {e} (non-critical)"
-                        )
-                        return
+            except Exception as e:
+                logger.warning(
+                    f"[SESSION] Status update error (attempt {attempt + 1}/{max_retries}): {e} - "
+                    f"{'retrying' if attempt < max_retries - 1 else 'giving up'}"
+                )
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(0.1 * (2 ** attempt))
+
+        # Step 3: ALWAYS broadcast via SSE (regardless of DB outcome)
+        try:
+            await sse_manager.broadcast(
+                self.instance_id,
+                {
+                    "type": "status_change",
+                    "status": status,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "db_persisted": db_success  # Let frontend know if DB is having issues
+                }
+            )
+            logger.debug(f"[SESSION] ✓ Status broadcasted via SSE (db_persisted={db_success})")
+        except Exception as broadcast_error:
+            logger.error(f"[SESSION] Failed to broadcast status via SSE: {broadcast_error}")
+
+        # Step 4: Log final status (never raise exception)
+        if not db_success:
+            logger.error(
+                f"[SESSION] Status '{status}' NOT persisted to DB after {max_retries} attempts, "
+                f"but broadcasted via SSE. In-memory state is authoritative."
+            )
 
     async def _update_session_id(self, session_id: str):
         """Update Claude SDK session_id in database."""

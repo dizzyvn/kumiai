@@ -267,17 +267,23 @@ class SessionExecutor:
         # Use sender_name (display name) for attribution
         sender = msg.sender_name if msg.sender_name else msg.sender_role.upper()
 
-        # Format sender attribution based on role
+        # Build sender info with role
         if msg.sender_role == "pm":
-            prefix = f"**Message from {sender} (PM):**\n"
+            sender_info = f"{sender} (PM)"
         elif msg.sender_role == "user":
-            prefix = f"**Message from User:**\n"
+            sender_info = "User"
         elif msg.sender_role == "orchestrator":
-            prefix = f"**Message from {sender} (Orchestrator):**\n"
+            sender_info = f"{sender} (Orchestrator)"
         elif msg.sender_role == "specialist" or msg.sender_role == "single_specialist":
-            prefix = f"**Message from {sender} (Specialist):**\n"
+            sender_info = f"{sender} (Specialist)"
         else:
-            prefix = f"**Message from {sender}:**\n"
+            sender_info = sender
+
+        # Append sender instance ID if available
+        if msg.sender_instance:
+            sender_info += f", from: {msg.sender_instance}"
+
+        prefix = f"**Message from {sender_info}:**\n"
 
         return prefix + msg.message
 

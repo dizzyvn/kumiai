@@ -1,13 +1,17 @@
 """Database connection and session management."""
 import asyncio
+import time
+import logging
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import text
 from .config import settings
 
+logger = logging.getLogger(__name__)
+
 # Connection semaphore to limit concurrent database connections
-# SQLite performs poorly with many concurrent writes, so we limit to 5 concurrent connections
-_db_semaphore = asyncio.Semaphore(5)
+# Increased to 15 to support 10+ concurrent sessions with multiple operations per session
+_db_semaphore = asyncio.Semaphore(15)
 
 # Create async engine with SQLite-specific optimizations
 # NOTE: SQLite uses NullPool by default (no connection pooling)
@@ -47,9 +51,26 @@ class AsyncSessionLocal:
         self._acquired = False
 
     async def __aenter__(self):
+        # Monitor semaphore queue wait time
+        queue_start = time.time()
+        available_before = _db_semaphore._value
+
         # Acquire semaphore before creating session
         await _db_semaphore.acquire()
         self._acquired = True
+
+        wait_time = time.time() - queue_start
+
+        # Log if queued for more than 2 seconds (indicates congestion)
+        if wait_time > 2.0:
+            available_slots = _db_semaphore._value
+            logger.warning(
+                f"[DATABASE] ⏱️ Semaphore wait: {wait_time:.2f}s | "
+                f"Slots before: {available_before}/15 | "
+                f"Slots now: {available_slots}/15 | "
+                f"High DB concurrency detected"
+            )
+
         self._session = _AsyncSessionLocal()
         return await self._session.__aenter__()
 

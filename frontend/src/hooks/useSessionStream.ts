@@ -56,6 +56,30 @@ export function useSessionStream({
     onEventRef.current = onEvent;
   }, [onEvent]);
 
+  // Fetch initial status on mount to avoid showing stale "idle" state
+  useEffect(() => {
+    const fetchInitialStatus = async () => {
+      try {
+        const response = await fetch(`/api/sessions/${instanceId}/status`);
+        if (response.ok) {
+          const data = await response.json();
+          setStatus(data.status);
+          console.log(`[useSessionStream] Initial status: ${data.status} (source: ${data.source})`);
+        } else {
+          console.warn(`[useSessionStream] Failed to fetch initial status: ${response.statusText}`);
+          // Keep default 'idle' status
+        }
+      } catch (error) {
+        console.error('[useSessionStream] Error fetching initial status:', error);
+        // Keep default 'idle' status
+      }
+    };
+
+    if (instanceId) {
+      fetchInitialStatus();
+    }
+  }, [instanceId]);
+
   // Process events in sequence order from reorder buffer
   const processReorderedEvents = useCallback(() => {
     const processedEvents: SessionEvent[] = [];
@@ -133,6 +157,15 @@ export function useSessionStream({
         // Update status immediately for status_change events (don't batch these)
         if (data.type === 'status_change') {
           setStatus((data as any).status);
+
+          // Warn if status not persisted to DB (indicates DB congestion)
+          if ((data as any).db_persisted === false) {
+            console.warn(
+              `[useSessionStream] ⚠️ Status change to '${(data as any).status}' not persisted to database. ` +
+              `DB may be congested. Status updates via SSE only.`
+            );
+            // Could show toast notification to user here if needed
+          }
         }
 
         // Handle events with sequence numbers (reorder if needed)
