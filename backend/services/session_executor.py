@@ -529,13 +529,13 @@ class SessionExecutor:
             raise
         finally:
             # Clear the current task name to prevent stale references
+            # Use the synchronous _clear_current_task() method which cannot fail
             try:
                 session = await self._get_or_load_session(instance_id)
-                if session._current_task_name:
-                    logger.info(f"[SESSION_EXECUTOR] Clearing task name {session._current_task_name} for {instance_id}")
-                    session._current_task_name = None
+                session._clear_current_task()
+                logger.info(f"[SESSION_EXECUTOR] Cleared task name for {instance_id}")
             except Exception as e:
-                logger.warning(f"[SESSION_EXECUTOR] Failed to clear task name: {e}")
+                logger.warning(f"[SESSION_EXECUTOR] Failed to get session for task cleanup: {e}")
 
             # Always cleanup incomplete streaming messages
             try:
